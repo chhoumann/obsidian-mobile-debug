@@ -165,7 +165,11 @@ and speaks **standard Chrome DevTools Protocol** — simpler than iOS's WIP, and
 exposes `performance.memory` (real JS-heap tracing, which iOS/WebKit doesn't).
 No physical device needed — an emulator works.
 
-Setup (Apple Silicon):
+**One command:** `./android_setup.sh` installs the SDK, boots a headless
+emulator, installs + launches Obsidian, and exposes a CDP endpoint — re-runnable,
+and overridable via `API` / `AVD` / `DEVICE` / `CDP_PORT` / `OBSIDIAN_APK` env
+vars. `REMOVE_SDK=1 ./android_teardown.sh` reverses all of it and reclaims the
+disk. The steps it automates, for reference:
 
 ```bash
 brew install --cask android-commandlinetools          # needs a JDK (brew install --cask temurin)
@@ -197,6 +201,7 @@ Gotchas specific to Android:
 - Obsidian's onboarding is itself a WebView, so you can drive vault creation by clicking DOM elements via `android_cdp.py eval`.
 
 Android scripts:
+- `android_setup.sh` / `android_teardown.sh` — stand up (SDK + emulator + Obsidian + CDP) / tear down the whole environment from scratch. Generic and re-runnable.
 - `android_cdp.py` — general CDP eval client (`eval "<js>"`, `pages`). The Android analogue of the iOS inspector connection.
 - `provider_matrix.py` — survey many podcast hosts (redirect depth, Range support, size) via the iTunes Search API. Provider-agnostic; good for not overfitting download tests to one host.
 - `android_dl_monitor.py` / `android_timed_download.py` — PodNotes-specific download harnesses: fire the download and trace `performance.memory` + on-disk growth + wall-time + crash. Worked examples.
