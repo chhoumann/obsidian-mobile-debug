@@ -51,21 +51,40 @@ support iOS 17+.
 
 ## Scripts
 
-### `podnotes_ios.py` — the workhorse
-Drives Obsidian over the inspector + AFC. Subcommands:
+### `obsidian_mobile_debug.py` — generalized CLI (start here)
+Config-driven; nothing hardcoded. Pass `--bundle` (default `md.obsidian`),
+`--plugin`, `--repo` as needed.
 
 | Command | What it does |
 |---|---|
-| `diagnose` | Report the plugin's install/enable state on the phone. |
-| `deploy` | Push the local build (`main.js` + `manifest.json`) into `.obsidian/plugins/<id>` over **AFC**, then reload via `disablePlugin` + `enablePluginAndSave`. Solves the "sync doesn't carry build files" gap. |
-| `reload` | Reload the plugin (disable → enable) without redeploying. |
-| `eval "<js>"` | Evaluate an async-aware JS expression against `app` and print JSON. |
-| `logs [--seconds N]` | Stream console output + uncaught errors from the webview. |
-| `repro [--count N]` | Fire the download command N× (fan-out) and watch app liveness — used to reproduce the OOM crash. |
-| `verify` | Fire a single download and watch the on-disk file grow chunk-by-chunk (proves streaming) + report final size. |
+| `pages` | List inspectable pages/webviews on the device. |
+| `eval "<js>"` | Evaluate an async-aware JS expression against the page; print JSON. |
+| `command <id>` | Run an Obsidian command by id (`executeCommandById`). |
+| `diagnose --plugin <id>` | Report a plugin's install/enable state. |
+| `deploy --plugin <id> --repo <path>` | AFC-push the build (`main.js` + `manifest.json`, plus `styles.css` if present) into the vault, then reload (disable → enable). Override paths with `--main/--manifest/--styles`; pass `--vault <name>` if you have more than one vault. |
+| `reload --plugin <id>` | disable → enable the plugin. |
+| `logs [--seconds N]` | Stream console + uncaught errors. |
 
-Constants at the top (`BUNDLE`, `PLUGIN_ID`, `REPO`, `LOCAL_FILES`) are
-PodNotes-specific — change them to retarget another plugin.
+```bash
+P=~/.local/share/uv/tools/pymobiledevice3/bin/python
+$P obsidian_mobile_debug.py pages
+$P obsidian_mobile_debug.py eval 'app.vault.getName()'
+$P obsidian_mobile_debug.py deploy --plugin dataview --repo ~/Developer/dataview
+$P obsidian_mobile_debug.py reload --plugin dataview
+$P obsidian_mobile_debug.py command app:reload
+```
+
+`deploy` derives the build files from `--repo` (`main.js` at the repo root or
+`build/main.js`; `manifest.json`; optional `styles.css`); override any with the
+explicit flags. Works against any WKWebView app via `--bundle`.
+
+### `podnotes_ios.py` — worked example (PodNotes-specific)
+The original, with constants hardcoded at the top (`BUNDLE`, `PLUGIN_ID`,
+`REPO`) and two extra **download-specific** commands used to chase the OOM bug:
+`repro [--count N]` (stack concurrent downloads to force the crash) and `verify`
+(fire one download and watch the on-disk file grow chunk-by-chunk). Kept as a
+reference for how to write plugin-specific reproduction commands; for everything
+else use the generalized CLI above.
 
 ### `obsidian_inspect_demo.py` — read-only intro
 Connects and reads vault state (name, file counts, plugins, dark mode, recent
