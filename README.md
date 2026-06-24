@@ -158,9 +158,55 @@ download command:
   high-RAM phone; stacking concurrent downloads (`repro --count N`) amplifies the
   memory pressure to force the kill deterministically.
 
+## Android (CDP)
+
+Android Obsidian is the same Capacitor WebView, but the WebView is **Chromium**
+and speaks **standard Chrome DevTools Protocol** — simpler than iOS's WIP, and it
+exposes `performance.memory` (real JS-heap tracing, which iOS/WebKit doesn't).
+No physical device needed — an emulator works.
+
+Setup (Apple Silicon):
+
+```bash
+brew install --cask android-commandlinetools          # needs a JDK (brew install --cask temurin)
+export ANDROID_SDK_ROOT=/opt/homebrew/share/android-commandlinetools
+yes | sdkmanager --licenses
+sdkmanager "platform-tools" "emulator" "platforms;android-34" \
+           "system-images;android-34;google_apis;arm64-v8a"
+echo no | avdmanager create avd -n podtest -d pixel_6 \
+           -k "system-images;android-34;google_apis;arm64-v8a"
+"$ANDROID_SDK_ROOT/emulator/emulator" -avd podtest -no-window -no-audio -gpu swiftshader_indirect &
+ADB="$ANDROID_SDK_ROOT/platform-tools/adb"
+"$ADB" wait-for-device                                 # then poll getprop sys.boot_completed = 1
+"$ADB" install -r Obsidian-<ver>.apk                   # github.com/obsidianmd/obsidian-releases
+"$ADB" shell am start -n md.obsidian/.MainActivity
+```
+
+Attach to the WebView over CDP:
+
+```bash
+PID=$("$ADB" shell pidof md.obsidian | tr -d '\r')
+"$ADB" forward tcp:9333 localabstract:webview_devtools_remote_$PID   # NOT 9222 — Electron apps (Griply!) grab it
+curl -s localhost:9333/json | python3 -m json.tool                  # the page's webSocketDebuggerUrl
+uv run --no-project --with websockets python android_cdp.py eval 'app.vault.getName()'
+```
+
+Gotchas specific to Android:
+- **Restricted mode blocks community plugins.** `enablePlugin` adds to the list but won't instantiate. First run `app.plugins.setEnable(true)`, then enable.
+- **Vault path** (App-storage vault) is `/sdcard/Android/data/md.obsidian/files/<vault>`; deploy a build with `adb push build/main.js <vault>/.obsidian/plugins/<id>/main.js`.
+- Obsidian's onboarding is itself a WebView, so you can drive vault creation by clicking DOM elements via `android_cdp.py eval`.
+
+Android scripts:
+- `android_cdp.py` — general CDP eval client (`eval "<js>"`, `pages`). The Android analogue of the iOS inspector connection.
+- `provider_matrix.py` — survey many podcast hosts (redirect depth, Range support, size) via the iTunes Search API. Provider-agnostic; good for not overfitting download tests to one host.
+- `android_dl_monitor.py` / `android_timed_download.py` — PodNotes-specific download harnesses: fire the download and trace `performance.memory` + on-disk growth + wall-time + crash. Worked examples.
+
+What the Android trace settled (2026-06): the streamed download is **memory-clean** on Android too — `appendBinary` is O(1), JS heap stays flat (~22 MB) through a 47–155 MB download, no crash. Chunk size barely affects wall-time (connection reuse amortizes the redirect chains), so it's not a slowness lever.
+
 ## Safety
 
 These scripts read and (for `deploy`) write files in the live vault and can
 trigger downloads. Tests download real episodes; clean up afterward
 (`adapter.remove`) and restore any mutated `currentEpisode`. Treat the phone's
-vault as production data.
+vault as production data. The `provider_matrix` / timed-download tools hit real
+podcast CDNs and trigger their download analytics — use sparingly.
