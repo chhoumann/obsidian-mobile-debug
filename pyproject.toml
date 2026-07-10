@@ -1,0 +1,42 @@
+[project]
+name = "obsidian-mobile-debug"
+version = "0.1.0"
+description = "Debug Obsidian (and other WebView apps) on a USB-connected iPhone or Android device."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+license-files = ["LICENSE"]
+authors = [{ name = "Christian B. B. Houmann", email = "christian@bagerbach.com" }]
+keywords = ["obsidian", "ios", "android", "webview", "debugging", "pymobiledevice3", "cdp"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Software Development :: Debuggers",
+]
+dependencies = [
+    "pymobiledevice3",
+    "websockets",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.urls]
+Homepage = "https://github.com/chhoumann/obsidian-mobile-debug"
+Repository = "https://github.com/chhoumann/obsidian-mobile-debug"
+
+[project.scripts]
+omd = "obsidian_mobile_debug.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/obsidian_mobile_debug"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
