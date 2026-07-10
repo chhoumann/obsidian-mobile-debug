@@ -301,9 +301,7 @@ async def cmd_deploy(args: argparse.Namespace) -> int:
             )
 
         target = f"{vault_path}/.obsidian/plugins/{args.plugin}"
-        adb_out(["shell", "mkdir", "-p", target])
-        for path in files.values():
-            run_adb(["push", str(path), f"{target}/"])
+        push_plugin_files(target, files)
 
         enable = await enable_plugin(args.port, args.plugin)
         runtime_after = await read_runtime_state(args.port, args.plugin)
@@ -312,6 +310,103 @@ async def cmd_deploy(args: argparse.Namespace) -> int:
     print(json.dumps(report, indent=2, ensure_ascii=False))
     instantiated = (runtime_after.get("plugin") or {}).get("instantiated")
     return 0 if instantiated else 2
+
+
+def android_vault_dir(root: str, vault_name: str) -> str:
+    """Absolute on-device vault path from a parent root and a vault name."""
+    return normalize_android_path(f"{root}/{vault_name}")
+
+
+def existing_vault_files(vault_path: str) -> set[str]:
+    """Relpaths (POSIX, vault-relative) of files already present under the vault.
+
+    ``find`` exits non-zero when the vault does not exist yet; that is the normal
+    first-provision case, so tolerate it and report an empty set.
+    """
+    listing = adb_out(["shell", "find", vault_path, "-type", "f"], check=False)
+    relpaths: set[str] = set()
+    for line in listing.splitlines():
+        line = line.strip()
+        if line.startswith(vault_path + "/"):
+            relpaths.add(line[len(vault_path) + 1:])
+    return relpaths
+
+
+def write_device_file(device_path: str, content: bytes) -> None:
+    """Write bytes to an on-device path, creating parent dirs, via a temp + adb push."""
+    import tempfile
+
+    adb_out(["shell", "mkdir", "-p", posixpath.dirname(device_path)])
+    with tempfile.NamedTemporaryFile() as tmp:
+        tmp.write(content)
+        tmp.flush()
+        run_adb(["push", tmp.name, device_path])
+
+
+def push_plugin_files(plugin_dir: str, files: dict[str, str]) -> None:
+    """adb-push resolved plugin artifacts into an on-device plugin dir."""
+    adb_out(["shell", "mkdir", "-p", plugin_dir])
+    for path in files.values():
+        run_adb(["push", str(path), f"{plugin_dir}/"])
+
+
+async def cmd_provision(args: argparse.Namespace) -> int:
+    from . import provision as prov
+
+    vault_path = android_vault_dir(args.vault_root, args.vault)
+    vault_name = posixpath.basename(vault_path)
+
+    if args.remove:
+        prov.guard_remove_vault(vault_name)
+        existed = bool(adb_out(["shell", "ls", "-d", vault_path], check=False))
+        if existed:
+            run_adb(["shell", "rm", "-rf", vault_path])
+        print(json.dumps({"action": "remove", "vaultPath": vault_path,
+                          "vaultName": vault_name, "removed": existed}, indent=2))
+        return 0
+
+    prov.guard_provision_vault(
+        vault_name, confirm_real=args.confirm_real_vault, test_vault=args.test_vault
+    )
+    files = resolve_plugin_files_for_provision(args)
+    data_seed = Path(args.data).expanduser().read_bytes() if args.data else None
+
+    skeleton = prov.vault_skeleton(args.plugin, data_seed)
+    existing = existing_vault_files(vault_path)
+    to_write = prov.plan_writes(skeleton, existing)
+    for entry in to_write:
+        write_device_file(f"{vault_path}/{entry.relpath}", entry.content)
+
+    plugin_report: dict[str, Any] | None = None
+    if files:
+        plugin_dir = f"{vault_path}/.obsidian/plugins/{args.plugin}"
+        push_plugin_files(plugin_dir, files)
+        plugin_report = {"pluginDir": plugin_dir, "files": sorted(files)}
+
+    report = {
+        "action": "provision",
+        "vaultPath": vault_path,
+        "vaultName": vault_name,
+        "wrote": [entry.relpath for entry in to_write],
+        "skipped": sorted(existing - {entry.relpath for entry in to_write}),
+        "plugin": plugin_report,
+        "openVaultHint": (
+            "Obsidian Android cannot switch vaults over CDP; open the vault by hand in the app "
+            "(sidebar -> vault switcher -> Open folder as vault, or Manage vaults), then use "
+            "`omd android reload`/`deploy`."
+        ),
+    }
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 0
+
+
+def resolve_plugin_files_for_provision(args: argparse.Namespace) -> dict[str, str] | None:
+    """Resolve plugin artifacts only when --plugin was passed; None otherwise."""
+    if not args.plugin:
+        return None
+    from .ios import resolve_plugin_files
+
+    return resolve_plugin_files(args)
 
 
 async def cmd_logs(args: argparse.Namespace) -> int:
@@ -346,6 +441,7 @@ _COMMANDS = {
     "diagnose": cmd_diagnose,
     "reload": cmd_reload,
     "deploy": cmd_deploy,
+    "provision": cmd_provision,
     "logs": cmd_logs,
 }
 

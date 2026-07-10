@@ -590,6 +590,78 @@ async def cmd_restore(lockdown: Any, args: argparse.Namespace) -> int:
     return 0
 
 
+async def existing_vault_files_afc(afc: Any, vault_path: str) -> set[str]:
+    """Relpaths (vault-relative, POSIX) already present under an AFC vault dir."""
+    if not await afc.exists(vault_path):
+        return set()
+    manifest = await collect_remote_file_manifest(afc, vault_path)
+    return set(manifest)
+
+
+async def cmd_provision(lockdown: Any, args: argparse.Namespace) -> int:
+    from . import provision as prov
+
+    vault_name = args.vault
+    vault_path = f"{prov.IOS_DOCUMENTS_ROOT}/{vault_name}"
+
+    afc = await afc_open(lockdown, args.bundle)
+    try:
+        if args.remove:
+            prov.guard_remove_vault(vault_name)
+            existed = await afc.exists(vault_path)
+            if existed:
+                undeleted = await afc.rm(vault_path, force=True)
+                if undeleted:
+                    raise SystemExit(f"Could not fully remove {vault_path}: {undeleted}")
+            print(json.dumps({"action": "remove", "vaultPath": vault_path,
+                              "vaultName": vault_name, "removed": existed}, indent=2))
+            return 0
+
+        prov.guard_provision_vault(
+            vault_name, confirm_real=args.confirm_real_vault, test_vault=args.test_vault
+        )
+        files = resolve_plugin_files(args) if args.plugin else None
+        data_seed = Path(args.data).expanduser().read_bytes() if args.data else None
+
+        skeleton = prov.vault_skeleton(args.plugin, data_seed)
+        existing = await existing_vault_files_afc(afc, vault_path)
+        to_write = prov.plan_writes(skeleton, existing)
+        for entry in to_write:
+            full = f"{vault_path}/{entry.relpath}"
+            await afc.makedirs(posixpath.dirname(full))
+            await afc.set_file_contents(full, entry.content)
+
+        plugin_report: dict[str, Any] | None = None
+        if files:
+            pdir = plugin_dir_for(vault_path, args.plugin)
+            await afc.makedirs(pdir)
+            pushed = {
+                name: await afc_put_verified(afc, f"{pdir}/{name}", Path(path).read_bytes())
+                for name, path in files.items()
+            }
+            plugin_report = {"pluginDir": pdir, "pushed": pushed}
+    finally:
+        await afc.close()
+
+    report = {
+        "action": "provision",
+        "vaultPath": vault_path,
+        "vaultName": vault_name,
+        "wrote": [entry.relpath for entry in to_write],
+        "skipped": sorted(existing - {entry.relpath for entry in to_write}),
+        "plugin": plugin_report,
+        "openVaultHint": (
+            "Obsidian iOS does not expose a scriptable vault switcher over the Web Inspector; "
+            "open the new vault by hand in the app (vault switcher -> your scratch vault), then "
+            "use `omd ios reload`/`deploy`."
+        ),
+    }
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+    if plugin_report and not all(entry.get("ok") for entry in plugin_report["pushed"].values()):
+        raise SystemExit("At least one pushed plugin file failed byte verification.")
+    return 0
+
+
 async def cmd_logs(lockdown: Any, args: argparse.Namespace) -> int:
     async with inspector_session(lockdown, args.bundle) as (_target, session):
         await ev(session, """((w) => {
@@ -632,6 +704,7 @@ _ASYNC_COMMANDS = {
     "diagnose": cmd_diagnose,
     "reload": cmd_reload,
     "deploy": cmd_deploy,
+    "provision": cmd_provision,
     "restore": cmd_restore,
     "logs": cmd_logs,
 }

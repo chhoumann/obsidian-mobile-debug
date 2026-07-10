@@ -1,5 +1,6 @@
 """Android pure helpers: adb command construction, path/vault logic, guards."""
 import argparse
+import json
 
 import pytest
 
@@ -92,3 +93,135 @@ def test_discover_socket_not_running_raises(monkeypatch):
     _stub_adb_out(monkeypatch, pidof="", unix_table="")
     with pytest.raises(SystemExit):
         android.discover_socket("md.obsidian")
+
+
+# ---------- provision ----------
+def test_android_vault_dir_joins_and_normalizes():
+    assert android.android_vault_dir("/storage/emulated/0/Documents", "omd-scratch") == \
+        "/storage/emulated/0/Documents/omd-scratch"
+    assert android.android_vault_dir("/sdcard/Documents/", "omd-scratch") == \
+        "/sdcard/Documents/omd-scratch"
+
+
+def test_existing_vault_files_parses_find_output(monkeypatch):
+    vault = "/sdcard/Documents/omd-scratch"
+    listing = (
+        f"{vault}/.obsidian/app.json\n"
+        f"{vault}/.obsidian/community-plugins.json\n"
+        f"{vault}/.obsidian/plugins/metaedit/data.json\n"
+    )
+    monkeypatch.setattr(android, "adb_out", lambda args, *, check=True: listing)
+    assert android.existing_vault_files(vault) == {
+        ".obsidian/app.json",
+        ".obsidian/community-plugins.json",
+        ".obsidian/plugins/metaedit/data.json",
+    }
+
+
+def test_existing_vault_files_empty_when_vault_absent(monkeypatch):
+    # `find` on a missing dir prints nothing (and exits non-zero, tolerated).
+    monkeypatch.setattr(android, "adb_out", lambda args, *, check=True: "")
+    assert android.existing_vault_files("/sdcard/Documents/omd-scratch") == set()
+
+
+class _FakeAdb:
+    """Records adb invocations so provision routing can be asserted without a device."""
+
+    def __init__(self, *, existing_listing="", exists=True):
+        self.existing_listing = existing_listing
+        self.exists = exists
+        self.pushes: list[tuple[str, str]] = []
+        self.shell_calls: list[list[str]] = []
+
+    def adb_out(self, args, *, check=True):
+        if args[:2] == ["shell", "find"]:
+            return self.existing_listing
+        if args[:2] == ["shell", "ls"]:
+            return "present" if self.exists else ""
+        if args[:2] == ["shell", "mkdir"]:
+            self.shell_calls.append(args)
+            return ""
+        return ""
+
+    def run_adb(self, args, *, check=True):
+        if args and args[0] == "push":
+            self.pushes.append((args[1], args[2]))
+        else:
+            self.shell_calls.append(args)
+        return None
+
+
+def _run_provision(monkeypatch, args, fake):
+    import asyncio
+
+    monkeypatch.setattr(android, "adb_out", fake.adb_out)
+    monkeypatch.setattr(android, "run_adb", fake.run_adb)
+    return asyncio.run(android.cmd_provision(args))
+
+
+def test_cmd_provision_first_run_writes_full_skeleton(monkeypatch, capsys):
+    fake = _FakeAdb(existing_listing="")
+    args = argparse.Namespace(
+        vault="omd-scratch", vault_root="/sdcard/Documents", plugin=None, repo=None,
+        main=None, manifest=None, styles=None, data=None, remove=False,
+        confirm_real_vault=False, test_vault=None,
+    )
+    assert _run_provision(monkeypatch, args, fake) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["action"] == "provision"
+    assert set(report["wrote"]) == {
+        ".obsidian/app.json", ".obsidian/appearance.json", ".obsidian/core-plugins.json",
+        ".obsidian/community-plugins.json", ".obsidian/workspace.json",
+    }
+    # Every skeleton file was pushed to the right absolute path.
+    pushed_targets = {dest for _src, dest in fake.pushes}
+    assert "/sdcard/Documents/omd-scratch/.obsidian/app.json" in pushed_targets
+
+
+def test_cmd_provision_idempotent_rerun_skips_and_rewrites(monkeypatch, capsys):
+    vault = "/sdcard/Documents/omd-scratch"
+    listing = "\n".join(
+        f"{vault}/.obsidian/{name}"
+        for name in ("app.json", "appearance.json", "core-plugins.json",
+                     "community-plugins.json", "workspace.json")
+    )
+    fake = _FakeAdb(existing_listing=listing)
+    args = argparse.Namespace(
+        vault="omd-scratch", vault_root="/sdcard/Documents", plugin=None, repo=None,
+        main=None, manifest=None, styles=None, data=None, remove=False,
+        confirm_real_vault=False, test_vault=None,
+    )
+    assert _run_provision(monkeypatch, args, fake) == 0
+    report = json.loads(capsys.readouterr().out)
+    # Only community-plugins.json (overwrite=True) is rewritten; the rest are skipped.
+    assert report["wrote"] == [".obsidian/community-plugins.json"]
+    assert ".obsidian/app.json" in report["skipped"]
+
+
+def test_cmd_provision_remove_guards_and_deletes(monkeypatch, capsys):
+    fake = _FakeAdb(exists=True)
+    args = argparse.Namespace(
+        vault="omd-scratch", vault_root="/sdcard/Documents", remove=True,
+    )
+    assert _run_provision(monkeypatch, args, fake) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["action"] == "remove" and report["removed"] is True
+    assert any(call[:3] == ["shell", "rm", "-rf"] for call in fake.shell_calls)
+
+
+def test_cmd_provision_remove_refuses_real_vault(monkeypatch):
+    fake = _FakeAdb(exists=True)
+    args = argparse.Namespace(vault="my-notes", vault_root="/sdcard/Documents", remove=True)
+    with pytest.raises(SystemExit):
+        _run_provision(monkeypatch, args, fake)
+
+
+def test_cmd_provision_refuses_real_vault_without_confirm(monkeypatch):
+    fake = _FakeAdb(existing_listing="")
+    args = argparse.Namespace(
+        vault="my-notes", vault_root="/sdcard/Documents", plugin=None, repo=None,
+        main=None, manifest=None, styles=None, data=None, remove=False,
+        confirm_real_vault=False, test_vault=None,
+    )
+    with pytest.raises(SystemExit):
+        _run_provision(monkeypatch, args, fake)
