@@ -9,7 +9,7 @@
 #   OBSIDIAN_APK=/path/to.apk   # skip the GitHub download and use a local APK
 #
 # After it finishes, attach with:
-#   uv run --no-project --with websockets python android_cdp.py eval 'app.vault.getName()'
+#   omd android eval 'app.vault.getName()'   # (omd re-establishes the CDP forward itself)
 set -euo pipefail
 
 API="${API:-34}"
@@ -70,21 +70,19 @@ echo "CDP ready -> http://localhost:$CDP_PORT/json"
 
 cat <<EOF
 
-Done. The emulator is on Obsidian's first-run screen. From here (CDP via android_cdp.py):
-  P="uv run --no-project --with websockets python android_cdp.py"
+Done. The emulator is on Obsidian's first-run screen. Drive it with the CLI
+(omd discovers the WebView socket and manages the adb forward itself):
 
   # 1. Create/open a vault by driving the onboarding DOM, e.g.:
-  \$P eval '[...document.querySelectorAll("button")].map(b=>b.innerText.trim())'   # see buttons, click via .click()
+  omd android eval '[...document.querySelectorAll("button")].map(b=>b.innerText.trim())'  # see buttons, click via .click()
   #    (onboarding markup changes between versions — inspect & click the right buttons)
 
   # 2. Community plugins are blocked by Restricted mode — turn it off:
-  \$P eval '(async()=>{await app.plugins.setEnable(true);return app.plugins.isEnabled()})()'
+  omd android eval '(async()=>{await app.plugins.setEnable(true);return app.plugins.isEnabled()})()'
 
-  # 3. Deploy a plugin build (vault is App-storage by default):
-  V=/sdcard/Android/data/$BUNDLE/files/<vault>/.obsidian/plugins/<id>
-  $ADB shell mkdir -p "\$V"
-  $ADB push build/main.js manifest.json "\$V"/
-  \$P eval '(async()=>{await app.plugins.loadManifests();await app.plugins.enablePlugin("<id>");return !!app.plugins.plugins["<id>"]})()'
+  # 3. Deploy a plugin build to a scratch vault (backup-free; --confirm-real-vault if not test-named):
+  omd android deploy --plugin <id> --repo ~/Developer/<plugin> \\
+    --vault-path /sdcard/Android/data/$BUNDLE/files/<vault>
 
 Tear it all down (and reclaim disk) with:  REMOVE_SDK=1 AVD=$AVD ./android_teardown.sh
 EOF
