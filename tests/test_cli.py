@@ -95,3 +95,8 @@ def test_android_provision_remove():
     args = parse("android", "provision", "--remove", "--vault", "omd-scratch")
     assert args.remove is True
     assert args.vault == "omd-scratch"
+
+
+def test_provision_open_flag_defaults_off():
+    assert parse("android", "provision").open is False
+    assert parse("ios", "provision", "--open").open is True

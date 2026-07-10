@@ -98,6 +98,7 @@ WebView app. Android commands take `--port` (default `9333`) for the CDP forward
 | `command <id>` | Run an Obsidian command by id (`executeCommandById`). |
 | `diagnose [--plugin <id>]` | Report runtime state (vault, platform, plugin counts); with `--plugin`, add that plugin's install/enable state and its AFC files. |
 | `deploy --plugin <id> --repo <path>` | Back up, then AFC-push the build (`main.js` + `manifest.json`, plus `styles.css` if present) into the vault, then reload. |
+| `provision [--plugin <id> --repo <path>] [--open] [--remove]` | Create a scratch vault with an `.obsidian` skeleton (optionally deploy a plugin), open it, or tear it down. See [Provision](#provisioning-a-scratch-vault). |
 | `reload --plugin <id>` | disable -> enable the plugin. |
 | `logs [--seconds N]` | Stream console + uncaught errors. |
 | `restore [--backup <dir>]` | Restore a pre-deploy backup (newest by default). |
@@ -111,6 +112,7 @@ WebView app. Android commands take `--port` (default `9333`) for the CDP forward
 | `eval "<js>"` / `eval --probe <file\|name>` | Evaluate JS over CDP (awaitPromise by default; `--no-await` to disable). |
 | `diagnose [--plugin <id>]` | Report runtime state; with `--plugin`, add that plugin's state. |
 | `deploy --plugin <id> --repo <path> --vault-path <abs>` | `adb push` the build to `<vault-path>/.obsidian/plugins/<id>`, then reload. |
+| `provision [--plugin <id> --repo <path>] [--open] [--remove]` | Create a scratch vault with an `.obsidian` skeleton (optionally deploy a plugin), open it, or tear it down. See [Provision](#provisioning-a-scratch-vault). |
 | `reload --plugin <id>` | `setEnable(true)` then disable -> enable the plugin. |
 | `logs [--seconds N]` | Stream logcat lines matching Obsidian/WebView/crash. |
 
@@ -137,6 +139,65 @@ WebView app. Android commands take `--port` (default `9333`) for the CDP forward
 
 `reload` is just step 4 against the already-installed plugin.
 
+## Provisioning a scratch vault
+
+`omd <platform> provision` stands up a **disposable, isolated vault on the
+device** so a verification loop never runs against real notes - the on-device
+mirror of the desktop runner's `provision` step (obsidian-e2e). It lays down a
+minimal `.obsidian` skeleton, optionally deploys a plugin into it, and can switch
+Obsidian into the vault for you.
+
+```bash
+# Create the default scratch vault (name: omd-scratch) and open it in the app.
+omd android provision --open
+omd ios provision --open
+
+# Provision WITH a plugin already deployed + enabled, seeding its data.json.
+omd android provision --plugin metaedit --repo ~/Developer/metaedit \
+  --data ./seed.json --open
+# ...then instantiate it (disables Restricted Mode on Android):
+omd android reload --plugin metaedit
+
+# Tear the scratch vault back down.
+omd android provision --remove
+```
+
+**What it writes** (mirrors the desktop runner exactly): `.obsidian/app.json`,
+`appearance.json`, `core-plugins.json`, `community-plugins.json` (listing the
+`--plugin` so it is enabled), a split `workspace.json`, and - with `--plugin
+--repo` - the plugin's `main.js` / `manifest.json` / `styles.css` plus a seeded
+`data.json` (`--data <file>`).
+
+**Where it writes.** iOS goes through AFC into the app's documents container at
+`/Documents/<vault>/`. Android writes under `--vault-root` (default
+`/storage/emulated/0/Documents`, the emulator layout), so the vault is
+`/storage/emulated/0/Documents/<vault>`.
+
+**Idempotent.** A re-run only fills in missing files and never overwrites an
+existing `data.json` (your seeded document survives), matching the desktop
+runner's write-if-missing semantics. `community-plugins.json` is the one file
+rewritten every run, so the enable list stays authoritative even after a partial
+prior run.
+
+**Opening the vault (`--open`).** Mobile Obsidian has no by-name "open this
+vault" JS API; `app.openVaultChooser` only clears the current selection and
+reloads to the chooser UI. What it revealed is that the open vault is recorded in
+`localStorage` - `mobile-selected-vault` (an absolute path) plus a
+`mobile-external-vaults` registry. `--open` registers the scratch vault's path,
+selects it, and reloads Obsidian into it (over CDP on Android, over the Web
+Inspector on iOS). On iOS the sandbox-absolute path is derived from the
+currently-open vault, so a vault must already be open once. Without `--open` the
+command prints the manual step (vault switcher -> Manage vaults). After opening a
+vault that carries a plugin, run `omd <platform> reload --plugin <id>` to
+instantiate it (Android additionally needs Restricted Mode off, which `reload`
+handles).
+
+**Safety.** Provisioning refuses a non-scratch-named vault (name must contain one
+of `test`, `scratch`, `debug`, `sandbox`) without `--confirm-real-vault`; the
+default `omd-scratch` always passes. `--remove` is **scratch-only by design**: it
+deletes the whole vault directory, so it has no override at all and can never
+remove a real vault - not even with `--confirm-real-vault`.
+
 ## Safety model
 
 The phone vault is real data. Guards, strongest first:
@@ -154,6 +215,10 @@ The phone vault is real data. Guards, strongest first:
 - **Android has no backup/restore path.** `adb push` is not snapshot-verified, so
   Android `deploy` is intended for a **disposable scratch vault** and always
   requires the confirm flag for a non-test-named vault.
+- **`provision` writes into a fresh vault; `provision --remove` is scratch-only.**
+  Provisioning needs `--confirm-real-vault` for a non-scratch name; removal deletes
+  a whole vault dir and therefore has *no* override - a real vault can never be
+  removed by this tool. See [Provision](#provisioning-a-scratch-vault).
 
 Set `OMD_BACKUP_DIR` to relocate the backup root.
 

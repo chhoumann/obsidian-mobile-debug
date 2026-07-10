@@ -132,6 +132,67 @@ def vault_skeleton(plugin_id: str | None, data_seed: bytes | None) -> list[Vault
     return files
 
 
+# Mobile Obsidian records the open vault as an absolute path in these localStorage
+# keys (discovered by reading app.openVaultChooser on-device): the selected vault
+# and the registry of known external vaults. Switching vaults = register the path,
+# select it, and reload. app.openVaultChooser itself only clears the selection to
+# show the chooser UI; there is no by-name "open this vault" API, so this is the
+# scriptable path. Shared by both platforms (same Capacitor mobile bundle).
+SELECTED_VAULT_KEY = "mobile-selected-vault"
+EXTERNAL_VAULTS_KEY = "mobile-external-vaults"
+
+CURRENT_SELECTED_VAULT_JS = f'localStorage.getItem({json.dumps(SELECTED_VAULT_KEY)})'
+
+
+def open_vault_js(vault_abs_path: str) -> str:
+    """JS that registers + selects an on-device vault path and reloads into it."""
+    path = json.dumps(vault_abs_path)
+    return (
+        "(() => {"
+        f"const p = {path};"
+        f"const reg = JSON.parse(localStorage.getItem({json.dumps(EXTERNAL_VAULTS_KEY)}) || '[]');"
+        "if (!reg.includes(p)) reg.push(p);"
+        f"localStorage.setItem({json.dumps(EXTERNAL_VAULTS_KEY)}, JSON.stringify(reg));"
+        f"localStorage.setItem({json.dumps(SELECTED_VAULT_KEY)}, p);"
+        "setTimeout(() => location.reload(), 300);"
+        "return { opened: p, registered: reg };"
+        "})()"
+    )
+
+
+def derive_sibling_vault_path(current_selected: str | None, vault_name: str) -> str:
+    """Absolute path of a sibling vault next to the currently-open one.
+
+    iOS vaults live at a sandbox-absolute path (``/var/mobile/Containers/.../Documents/<vault>``)
+    that AFC's ``/Documents`` view does not reveal. The open vault's recorded path
+    ends in its own name, so its parent is the container Documents dir; the new
+    scratch vault is a sibling there.
+    """
+    if not current_selected:
+        raise SystemExit(
+            "Cannot derive the on-device vault path to open: no vault is currently selected "
+            f"(localStorage {SELECTED_VAULT_KEY!r} is empty). Open any vault in the app once, "
+            "then rerun with --open - or open the scratch vault by hand."
+        )
+    parent = current_selected.rsplit("/", 1)[0]
+    return f"{parent}/{vault_name}"
+
+
+def open_hint(open_flag: bool, plugin_id: str | None, platform: str) -> str:
+    """Human-facing next-step hint for the provision report's openVaultHint field."""
+    plugin_step = (
+        f" Then enable the plugin with `omd {platform} reload --plugin {plugin_id}` "
+        "(it disables Restricted Mode and instantiates the plugin)."
+        if plugin_id else ""
+    )
+    if open_flag:
+        return "Obsidian is reloading into the scratch vault now (a few seconds)." + plugin_step
+    return (
+        "Rerun with --open to switch Obsidian into this vault automatically, or open it by hand "
+        "in the app (vault switcher -> Manage vaults / Open folder as vault)." + plugin_step
+    )
+
+
 def plan_writes(skeleton: list[VaultFile], existing_relpaths: set[str]) -> list[VaultFile]:
     """Filter the skeleton down to the files a (possibly re-run) provision should write.
 

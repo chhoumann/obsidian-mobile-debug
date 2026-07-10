@@ -643,6 +643,16 @@ async def cmd_provision(lockdown: Any, args: argparse.Namespace) -> int:
     finally:
         await afc.close()
 
+    opened: dict[str, Any] | None = None
+    if args.open:
+        # Derive the sandbox-absolute vault path from the currently-open vault
+        # (AFC's /Documents view does not expose it), then register + select +
+        # reload via the same localStorage mechanism as Android.
+        async with inspector_session(lockdown, args.bundle) as (_target, session):
+            current = await ev(session, prov.CURRENT_SELECTED_VAULT_JS)
+            open_path = prov.derive_sibling_vault_path(current, vault_name)
+            opened = await ev(session, prov.open_vault_js(open_path))
+
     report = {
         "action": "provision",
         "vaultPath": vault_path,
@@ -650,11 +660,8 @@ async def cmd_provision(lockdown: Any, args: argparse.Namespace) -> int:
         "wrote": [entry.relpath for entry in to_write],
         "skipped": sorted(existing - {entry.relpath for entry in to_write}),
         "plugin": plugin_report,
-        "openVaultHint": (
-            "Obsidian iOS does not expose a scriptable vault switcher over the Web Inspector; "
-            "open the new vault by hand in the app (vault switcher -> your scratch vault), then "
-            "use `omd ios reload`/`deploy`."
-        ),
+        "opened": opened,
+        "openVaultHint": prov.open_hint(args.open, args.plugin, "ios"),
     }
     print(json.dumps(report, indent=2, ensure_ascii=False))
     if plugin_report and not all(entry.get("ok") for entry in plugin_report["pushed"].values()):

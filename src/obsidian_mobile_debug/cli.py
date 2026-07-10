@@ -55,6 +55,8 @@ def _add_provision_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--manifest", help="path to manifest.json (overrides --repo)")
     parser.add_argument("--styles", help="path to styles.css (optional)")
     parser.add_argument("--data", help="seed the plugin's data.json from this file (first provision only)")
+    parser.add_argument("--open", action="store_true",
+                        help="after provisioning, switch Obsidian into the vault and reload (needs the app running)")
     parser.add_argument("--remove", action="store_true",
                         help="delete the scratch vault instead of provisioning it (scratch names only)")
     parser.add_argument("--confirm-real-vault", action="store_true",

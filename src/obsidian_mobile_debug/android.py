@@ -383,6 +383,11 @@ async def cmd_provision(args: argparse.Namespace) -> int:
         push_plugin_files(plugin_dir, files)
         plugin_report = {"pluginDir": plugin_dir, "files": sorted(files)}
 
+    opened: dict[str, Any] | None = None
+    if args.open:
+        with cdp_forward(args.port, args.bundle):
+            opened = await ev(args.port, prov.open_vault_js(vault_path))
+
     report = {
         "action": "provision",
         "vaultPath": vault_path,
@@ -390,11 +395,8 @@ async def cmd_provision(args: argparse.Namespace) -> int:
         "wrote": [entry.relpath for entry in to_write],
         "skipped": sorted(existing - {entry.relpath for entry in to_write}),
         "plugin": plugin_report,
-        "openVaultHint": (
-            "Obsidian Android cannot switch vaults over CDP; open the vault by hand in the app "
-            "(sidebar -> vault switcher -> Open folder as vault, or Manage vaults), then use "
-            "`omd android reload`/`deploy`."
-        ),
+        "opened": opened,
+        "openVaultHint": prov.open_hint(args.open, args.plugin, "android"),
     }
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0

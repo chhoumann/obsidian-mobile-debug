@@ -112,3 +112,30 @@ def test_guard_remove_blocks_real_vault_even_with_confirm():
     # so guard_remove_vault has no bypass parameter at all.
     with pytest.raises(SystemExit):
         prov.guard_remove_vault("notes")
+
+
+def test_open_vault_js_registers_selects_and_reloads():
+    src = prov.open_vault_js("/storage/emulated/0/Documents/omd-scratch")
+    assert '"/storage/emulated/0/Documents/omd-scratch"' in src
+    assert prov.SELECTED_VAULT_KEY in src
+    assert prov.EXTERNAL_VAULTS_KEY in src
+    assert "location.reload()" in src
+
+
+def test_derive_sibling_vault_path_from_open_vault():
+    got = prov.derive_sibling_vault_path(
+        "/var/mobile/Containers/Data/Application/UUID/Documents/Notes", "omd-scratch"
+    )
+    assert got == "/var/mobile/Containers/Data/Application/UUID/Documents/omd-scratch"
+
+
+def test_derive_sibling_vault_path_needs_an_open_vault():
+    with pytest.raises(SystemExit):
+        prov.derive_sibling_vault_path(None, "omd-scratch")
+
+
+def test_open_hint_reflects_open_and_plugin():
+    assert "reloading" in prov.open_hint(True, None, "android")
+    assert "--open" in prov.open_hint(False, None, "ios")
+    with_plugin = prov.open_hint(True, "metaedit", "android")
+    assert "omd android reload --plugin metaedit" in with_plugin

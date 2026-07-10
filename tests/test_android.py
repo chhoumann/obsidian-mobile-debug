@@ -163,7 +163,7 @@ def test_cmd_provision_first_run_writes_full_skeleton(monkeypatch, capsys):
     fake = _FakeAdb(existing_listing="")
     args = argparse.Namespace(
         vault="omd-scratch", vault_root="/sdcard/Documents", plugin=None, repo=None,
-        main=None, manifest=None, styles=None, data=None, remove=False,
+        main=None, manifest=None, styles=None, data=None, remove=False, open=False,
         confirm_real_vault=False, test_vault=None,
     )
     assert _run_provision(monkeypatch, args, fake) == 0
@@ -188,7 +188,7 @@ def test_cmd_provision_idempotent_rerun_skips_and_rewrites(monkeypatch, capsys):
     fake = _FakeAdb(existing_listing=listing)
     args = argparse.Namespace(
         vault="omd-scratch", vault_root="/sdcard/Documents", plugin=None, repo=None,
-        main=None, manifest=None, styles=None, data=None, remove=False,
+        main=None, manifest=None, styles=None, data=None, remove=False, open=False,
         confirm_real_vault=False, test_vault=None,
     )
     assert _run_provision(monkeypatch, args, fake) == 0
@@ -216,11 +216,39 @@ def test_cmd_provision_remove_refuses_real_vault(monkeypatch):
         _run_provision(monkeypatch, args, fake)
 
 
+def test_cmd_provision_open_switches_vault_over_cdp(monkeypatch, capsys):
+    import contextlib
+
+    fake = _FakeAdb(existing_listing="")
+    evaled: list[str] = []
+
+    @contextlib.contextmanager
+    def fake_forward(port, package):
+        yield 4321
+
+    async def fake_ev(port, expr, **kwargs):
+        evaled.append(expr)
+        return {"opened": "/sdcard/Documents/omd-scratch"}
+
+    monkeypatch.setattr(android, "cdp_forward", fake_forward)
+    monkeypatch.setattr(android, "ev", fake_ev)
+    args = argparse.Namespace(
+        vault="omd-scratch", vault_root="/sdcard/Documents", plugin=None, repo=None,
+        main=None, manifest=None, styles=None, data=None, remove=False, open=True,
+        confirm_real_vault=False, test_vault=None, port=9333, bundle="md.obsidian",
+    )
+    assert _run_provision(monkeypatch, args, fake) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["opened"] == {"opened": "/sdcard/Documents/omd-scratch"}
+    # The open eval targets the provisioned vault path via localStorage + reload.
+    assert any("mobile-selected-vault" in expr and "location.reload()" in expr for expr in evaled)
+
+
 def test_cmd_provision_refuses_real_vault_without_confirm(monkeypatch):
     fake = _FakeAdb(existing_listing="")
     args = argparse.Namespace(
         vault="my-notes", vault_root="/sdcard/Documents", plugin=None, repo=None,
-        main=None, manifest=None, styles=None, data=None, remove=False,
+        main=None, manifest=None, styles=None, data=None, remove=False, open=False,
         confirm_real_vault=False, test_vault=None,
     )
     with pytest.raises(SystemExit):
