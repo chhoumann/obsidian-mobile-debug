@@ -44,11 +44,33 @@ def _add_deploy_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--test-vault", help="whitelist this exact vault name as a safe test vault")
 
 
+def _add_provision_args(parser: argparse.ArgumentParser) -> None:
+    from .provision import DEFAULT_VAULT
+
+    parser.add_argument("--vault", default=DEFAULT_VAULT,
+                        help=f"scratch vault name (default: {DEFAULT_VAULT})")
+    parser.add_argument("--plugin", help="also deploy this plugin and enable it in the vault")
+    parser.add_argument("--repo", help="plugin repo path (derives main.js/manifest.json/styles.css)")
+    parser.add_argument("--main", help="path to built main.js (overrides --repo)")
+    parser.add_argument("--manifest", help="path to manifest.json (overrides --repo)")
+    parser.add_argument("--styles", help="path to styles.css (optional)")
+    parser.add_argument("--data", help="seed the plugin's data.json from this file (first provision only)")
+    parser.add_argument("--open", action="store_true",
+                        help="after provisioning, switch Obsidian into the vault and reload (needs the app running)")
+    parser.add_argument("--remove", action="store_true",
+                        help="delete the scratch vault instead of provisioning it (scratch names only)")
+    parser.add_argument("--confirm-real-vault", action="store_true",
+                        help="acknowledge provisioning into a non-scratch-named vault (never unlocks --remove)")
+    parser.add_argument("--test-vault", help="whitelist this exact vault name as a safe scratch vault")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="omd",
         description="Debug Obsidian (and other WebView apps) on a USB-connected iPhone or Android device.",
     )
+    from .provision import ANDROID_DEFAULT_ROOT
+
     parser.add_argument("--version", action="version", version=f"omd {__version__}")
     platforms = parser.add_subparsers(dest="platform", required=True)
     common = _common_parent()
@@ -84,6 +106,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--force", action="store_true", help="allow restore when the backup device id differs")
     p.add_argument("--no-reload", action="store_true", help="copy files only; do not adjust enabled state")
 
+    p = ios_sub.add_parser("provision", parents=[common],
+                          help="create (or --remove) a scratch vault with an .obsidian skeleton")
+    _add_provision_args(p)
+
     p = ios_sub.add_parser("logs", parents=[common], help="stream console + uncaught errors")
     p.add_argument("--seconds", type=int, default=60)
 
@@ -115,6 +141,12 @@ def build_parser() -> argparse.ArgumentParser:
                               help="adb-push a built plugin to a scratch vault, then reload")
     _add_deploy_args(p)
     p.add_argument("--vault-path", required=True, help="absolute on-device vault path (e.g. /sdcard/Documents/Scratch)")
+
+    p = android_sub.add_parser("provision", parents=[common, android_common],
+                              help="create (or --remove) a scratch vault with an .obsidian skeleton")
+    _add_provision_args(p)
+    p.add_argument("--vault-root", default=ANDROID_DEFAULT_ROOT,
+                   help=f"on-device parent dir for the scratch vault (default: {ANDROID_DEFAULT_ROOT})")
 
     p = android_sub.add_parser("logs", parents=[common, android_common], help="stream logcat (Obsidian/WebView/crash)")
     p.add_argument("--seconds", type=int, default=60)

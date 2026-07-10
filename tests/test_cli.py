@@ -65,3 +65,38 @@ def test_platform_required():
 def test_bundle_override():
     args = parse("ios", "pages", "--bundle", "com.example.app")
     assert args.bundle == "com.example.app"
+
+
+def test_ios_provision_defaults():
+    args = parse("ios", "provision")
+    assert args.cmd == "provision"
+    assert args.vault == "omd-scratch"
+    assert args.plugin is None
+    assert args.remove is False
+    assert args.confirm_real_vault is False
+
+
+def test_ios_provision_with_plugin_and_data():
+    args = parse("ios", "provision", "--plugin", "metaedit", "--repo", "/tmp/me",
+                 "--data", "/tmp/seed.json")
+    assert args.plugin == "metaedit"
+    assert args.repo == "/tmp/me"
+    assert args.data == "/tmp/seed.json"
+
+
+def test_android_provision_defaults_root():
+    args = parse("android", "provision")
+    assert args.vault == "omd-scratch"
+    assert args.vault_root == "/storage/emulated/0/Documents"
+    assert args.port == DEFAULT_CDP_PORT
+
+
+def test_android_provision_remove():
+    args = parse("android", "provision", "--remove", "--vault", "omd-scratch")
+    assert args.remove is True
+    assert args.vault == "omd-scratch"
+
+
+def test_provision_open_flag_defaults_off():
+    assert parse("android", "provision").open is False
+    assert parse("ios", "provision", "--open").open is True
