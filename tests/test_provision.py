@@ -134,6 +134,25 @@ def test_derive_sibling_vault_path_needs_an_open_vault():
         prov.derive_sibling_vault_path(None, "omd-scratch")
 
 
+def test_derive_sibling_vault_path_refuses_external_vault():
+    # An iCloud/external vault lives outside the app container, so the provisioned
+    # /Documents/<vault> is not a sibling of it - --open must refuse, not reload empty.
+    with pytest.raises(SystemExit) as exc:
+        prov.derive_sibling_vault_path(
+            "/private/var/mobile/Library/Mobile Documents/iCloud~md~obsidian/Documents/Notes",
+            "omd-scratch",
+        )
+    assert "not in the app's Documents container" in str(exc.value)
+
+
+def test_derive_sibling_vault_path_refuses_non_documents_container_dir():
+    # In-container but not directly under Documents: still not where AFC provisioned.
+    with pytest.raises(SystemExit):
+        prov.derive_sibling_vault_path(
+            "/var/mobile/Containers/Data/Application/UUID/Library/Vaults/Notes", "omd-scratch"
+        )
+
+
 def test_open_hint_reflects_open_and_plugin():
     assert "reloading" in prov.open_hint(True, None, "android")
     assert "--open" in prov.open_hint(False, None, "ios")

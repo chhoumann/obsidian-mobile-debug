@@ -160,6 +160,15 @@ def open_vault_js(vault_abs_path: str) -> str:
     )
 
 
+# The AFC house_arrest (documents_only) view we provision through maps onto the
+# app's own sandbox container: /var/mobile/Containers/Data/Application/<UUID>/Documents.
+# This marker identifies a vault that lives in that container - the only case where
+# the provisioned /Documents/<vault> is a genuine sibling of the open vault. An
+# iCloud/external vault records a different root (e.g. .../Mobile Documents/...),
+# so a sibling of it would point nowhere the provision wrote.
+APP_CONTAINER_MARKER = "/Containers/Data/Application/"
+
+
 def derive_sibling_vault_path(current_selected: str | None, vault_name: str) -> str:
     """Absolute path of a sibling vault next to the currently-open one.
 
@@ -167,6 +176,11 @@ def derive_sibling_vault_path(current_selected: str | None, vault_name: str) -> 
     that AFC's ``/Documents`` view does not reveal. The open vault's recorded path
     ends in its own name, so its parent is the container Documents dir; the new
     scratch vault is a sibling there.
+
+    Only valid when the open vault is itself in the app container: provisioning
+    writes through AFC into that container's ``Documents``, so a sibling of an
+    iCloud/external vault would resolve to a path the provision never touched.
+    Refuse in that case rather than reload Obsidian into an empty vault.
     """
     if not current_selected:
         raise SystemExit(
@@ -175,6 +189,15 @@ def derive_sibling_vault_path(current_selected: str | None, vault_name: str) -> 
             "then rerun with --open - or open the scratch vault by hand."
         )
     parent = current_selected.rsplit("/", 1)[0]
+    if APP_CONTAINER_MARKER not in current_selected or not parent.endswith("/Documents"):
+        raise SystemExit(
+            f"Cannot open the scratch vault automatically: the vault currently open in Obsidian "
+            f"({current_selected!r}) is not in the app's Documents container, so the provisioned "
+            f"vault at .../Documents/{vault_name} is not a sibling of it and --open would reload "
+            "into an empty vault. The scratch vault was still provisioned - open it by hand in the "
+            "app (vault switcher), or first open any in-app (non-iCloud/external) vault and rerun "
+            "with --open."
+        )
     return f"{parent}/{vault_name}"
 
 
