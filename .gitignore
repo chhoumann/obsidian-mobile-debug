@@ -4,3 +4,9 @@ __pycache__/
 .venv/
 .pmd-venv/
 .DS_Store
+
+# Python packaging / test artifacts
+build/
+dist/
+*.egg-info/
+.pytest_cache/
