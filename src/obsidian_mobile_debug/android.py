@@ -98,8 +98,8 @@ def run_adb(args: list[str], *, check: bool = True) -> subprocess.CompletedProce
         raise SystemExit(f"adb {' '.join(args)} failed: {exc.stderr.strip() or exc}") from exc
 
 
-def adb_out(args: list[str]) -> str:
-    return run_adb(args).stdout.strip()
+def adb_out(args: list[str], *, check: bool = True) -> str:
+    return run_adb(args, check=check).stdout.strip()
 
 
 def discover_socket(package: str) -> tuple[str, int]:
@@ -116,7 +116,9 @@ def discover_socket(package: str) -> tuple[str, int]:
             f"(adb shell am start -n {package}/.MainActivity)"
         )
 
-    unix_table = adb_out(["shell", "cat", "/proc/net/unix"])
+    # Some devices restrict /proc/net/unix; tolerate a non-zero exit and fall
+    # back to the pidof-constructed socket name below instead of aborting.
+    unix_table = adb_out(["shell", "cat", "/proc/net/unix"], check=False)
     sockets = set(re.findall(r"@?(webview_devtools_remote_\d+)", unix_table))
     for pid in pids:
         name = f"webview_devtools_remote_{pid}"

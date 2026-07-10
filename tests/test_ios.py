@@ -81,6 +81,35 @@ def test_resolve_plugin_files_needs_repo_or_main():
         ios.resolve_plugin_files(args)
 
 
+class _FakeApp:
+    def __init__(self, bundle, name):
+        self.bundle = bundle
+        self.name = name
+
+
+class _FakePage:
+    def __init__(self, bundle, name):
+        self.application = _FakeApp(bundle, name)
+
+
+def test_page_matches_bundle_exact():
+    page = _FakePage("com.example.app", "Example")
+    assert ios.page_matches_bundle(page, "com.example.app")
+
+
+def test_page_matches_bundle_default_name_fallback():
+    # Obsidian's page may not report bundle == md.obsidian; name fallback applies
+    # only for the default bundle.
+    page = _FakePage("com.apple.WebKit.WebContent", "Obsidian")
+    assert ios.page_matches_bundle(page, ios.DEFAULT_BUNDLE)
+
+
+def test_page_matches_bundle_non_default_is_strict():
+    # An explicit --bundle for another app must not silently match Obsidian.
+    page = _FakePage("com.apple.WebKit.WebContent", "Obsidian")
+    assert not ios.page_matches_bundle(page, "com.example.app")
+
+
 def test_safe_segment():
     assert ios.safe_segment("a/b c") == "a-b-c"
     assert ios.safe_segment("///") == "unknown"

@@ -165,16 +165,24 @@ async def inspector_session(lockdown: Any, bundle: str):
         await inspector.close()
 
 
+def page_matches_bundle(page: Any, bundle: str) -> bool:
+    """Whether an inspector page belongs to the requested bundle.
+
+    Obsidian's iOS inspector page does not always report bundle == md.obsidian,
+    so fall back to a name match - but only when targeting the default bundle,
+    so an explicit --bundle for another app never silently hits Obsidian.
+    """
+    if page.application.bundle == bundle:
+        return True
+    if bundle != DEFAULT_BUNDLE:
+        return False
+    name = (page.application.name or "").lower()
+    return "obsidian" in name
+
+
 async def open_session(inspector: Any, bundle: str) -> tuple[Any, Any]:
     pages = await inspector.get_open_application_pages(timeout=3)
-
-    def matches(page: Any) -> bool:
-        if page.application.bundle == bundle:
-            return True
-        name = (page.application.name or "").lower()
-        return "obsidian" in name
-
-    target = next((page for page in pages if matches(page)), None)
+    target = next((page for page in pages if page_matches_bundle(page, bundle)), None)
     if target is None:
         raise SystemExit(
             f"No inspectable page for bundle {bundle!r}. Unlock the phone, open the app, and "
@@ -288,10 +296,10 @@ async def enable_plugin(session: Any, plugin: str) -> dict[str, Any]:
 
 
 # ---------- AFC (house_arrest documents container) ----------
-async def afc_open(lockdown: Any) -> Any:
+async def afc_open(lockdown: Any, bundle: str) -> Any:
     from pymobiledevice3.services.house_arrest import HouseArrestService
 
-    return await HouseArrestService.create(lockdown, DEFAULT_BUNDLE, documents_only=True)
+    return await HouseArrestService.create(lockdown, bundle, documents_only=True)
 
 
 async def afc_find_vault(afc: Any, prefer: str | None) -> tuple[str, list[str]]:
@@ -448,7 +456,7 @@ async def cmd_diagnose(lockdown: Any, args: argparse.Namespace) -> int:
         report["runtime"] = await read_runtime_state(session, args.plugin)
 
     if args.plugin:
-        afc = await afc_open(lockdown)
+        afc = await afc_open(lockdown, args.bundle)
         try:
             vault_path, vaults = await afc_find_vault(afc, args.vault)
             pdir = plugin_dir_for(vault_path, args.plugin)
@@ -480,7 +488,7 @@ async def cmd_deploy(lockdown: Any, args: argparse.Namespace) -> int:
     async with inspector_session(lockdown, args.bundle) as (_target, session):
         state_before = await read_runtime_state(session, args.plugin)
 
-        afc = await afc_open(lockdown)
+        afc = await afc_open(lockdown, args.bundle)
         try:
             vault_path, _vaults = await afc_find_vault(afc, args.vault)
             vault_name = vault_path.rsplit("/", 1)[-1]
@@ -548,7 +556,7 @@ async def cmd_restore(lockdown: Any, args: argparse.Namespace) -> int:
             f"Backup device: {expected_device}\nConnected device: {current_device}"
         )
 
-    afc = await afc_open(lockdown)
+    afc = await afc_open(lockdown, args.bundle)
     try:
         vault_path, _vaults = await afc_find_vault(afc, vault_name)
         expected_dir = plugin_dir_for(vault_path, plugin)

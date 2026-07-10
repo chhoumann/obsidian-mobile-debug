@@ -62,3 +62,33 @@ def test_guard_real_vault_allows_flag():
 def test_guard_real_vault_allows_test_name():
     args = argparse.Namespace(confirm_real_vault=False, test_vault=None)
     android.guard_real_vault("scratch-vault", args, "deploy")  # no raise
+
+
+def _stub_adb_out(monkeypatch, *, pidof: str, unix_table: str):
+    def fake_adb_out(args, *, check=True):
+        if args[:2] == ["shell", "pidof"]:
+            return pidof
+        if args[:2] == ["shell", "cat"]:
+            return unix_table
+        raise AssertionError(f"unexpected adb_out call: {args}")
+
+    monkeypatch.setattr(android, "adb_out", fake_adb_out)
+
+
+def test_discover_socket_matches_pid_from_unix_table(monkeypatch):
+    table = "Num ...\n0000: 00000002 @webview_devtools_remote_3632\n"
+    _stub_adb_out(monkeypatch, pidof="3632", unix_table=table)
+    assert android.discover_socket("md.obsidian") == ("webview_devtools_remote_3632", 3632)
+
+
+def test_discover_socket_falls_back_when_proc_net_unix_blocked(monkeypatch):
+    # Restricted /proc/net/unix: `cat` exits non-zero and adb_out(check=False)
+    # returns an empty table. Discovery must still construct the socket from pidof.
+    _stub_adb_out(monkeypatch, pidof="4321", unix_table="")
+    assert android.discover_socket("md.obsidian") == ("webview_devtools_remote_4321", 4321)
+
+
+def test_discover_socket_not_running_raises(monkeypatch):
+    _stub_adb_out(monkeypatch, pidof="", unix_table="")
+    with pytest.raises(SystemExit):
+        android.discover_socket("md.obsidian")
