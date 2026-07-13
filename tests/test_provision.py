@@ -296,3 +296,24 @@ def test_derive_sibling_vault_path_absolute_form_unchanged():
         "/var/mobile/Containers/Data/Application/ABC/Documents/notes", "omd-scratch"
     )
     assert got == "/var/mobile/Containers/Data/Application/ABC/Documents/omd-scratch"
+
+
+# ---------- Restricted Mode trust pre-seeding ----------
+def test_open_vault_js_without_trust_never_touches_trust_key():
+    assert "enable-plugin-" not in prov.open_vault_js("documents/x-scratch")
+
+
+def test_open_vault_js_with_trust_sets_per_vault_key():
+    code = prov.open_vault_js("documents/x-scratch", trust_plugins=True)
+    assert '"enable-plugin-documents/x-scratch", "true"' in code
+
+
+def test_trust_vault_js_targets_exact_path():
+    assert prov.trust_vault_js("documents/a") == 'localStorage.setItem("enable-plugin-documents/a", "true")'
+
+
+def test_forget_vault_js_deregisters_and_drops_trust():
+    code = prov.forget_vault_js("documents/x-scratch")
+    assert '"documents/x-scratch"' in code
+    assert "filter" in code
+    assert 'removeItem("enable-plugin-" + p)' in code

@@ -479,7 +479,9 @@ async def cmd_provision(args: argparse.Namespace) -> int:
     opened: dict[str, Any] | None = None
     if args.open:
         with cdp_forward(args.port, args.bundle):
-            opened = await ev(args.port, prov.open_vault_js(vault_path))
+            opened = await ev(
+                args.port, prov.open_vault_js(vault_path, trust_plugins=bool(args.plugin))
+            )
 
     report = {
         "action": "provision",

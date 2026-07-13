@@ -191,8 +191,14 @@ Inspector on iOS). On iOS the sandbox-absolute path is derived from the
 currently-open vault, so a vault must already be open once. Without `--open` the
 command prints the manual step (vault switcher -> Manage vaults). After opening a
 vault that carries a plugin, run `omd <platform> reload --plugin <id>` to
-instantiate it (Android additionally needs Restricted Mode off, which `reload`
-handles).
+instantiate it (`reload` turns Restricted Mode off on both platforms).
+
+**No Trust prompt.** Obsidian mobile normally shows a manual "Trust vault"
+prompt the first time it opens an unknown vault whose `community-plugins.json`
+lists plugins. When `--open` carries a `--plugin`, the vault is pre-trusted by
+writing the same per-vault localStorage flag the Trust button would set
+(`enable-plugin-<vault-path>`), so the switch is fully hands-off. Restoring or
+opening a user's own vault never touches their trust decision.
 
 **Safety.** Provisioning refuses a non-scratch-named vault (name must contain one
 of `test`, `scratch`, `debug`, `sandbox`) without `--confirm-real-vault`; the
@@ -218,12 +224,14 @@ omd ios verify \
 
 It diagnoses the runtime, provisions a plugin-namespaced scratch vault
 (`<plugin>-omd-scratch`; artifacts hash-verified on iOS), switches Obsidian
-into it, enables the plugin and asserts it is enabled + instantiated, runs
+into it hands-off (the scratch vault is pre-trusted, so no manual "Trust
+vault" prompt), enables the plugin and asserts it is enabled + instantiated, runs
 each `--probe` while capturing every console argument on the same session
 (no second process contending for the inspector), optionally keeps capturing
 for `--logs-seconds`, then restores the original vault (skip with
 `--keep-vault`) and - with `--cleanup`, only after a verified restore -
-removes the scratch vault.
+removes the scratch vault, deregistering it from the vault switcher and
+dropping its trust flag.
 
 Exit codes: `0` when every assertion passed, `2` when an assertion failed (a
 probe returned `ok:false` or threw, the plugin did not instantiate, artifact

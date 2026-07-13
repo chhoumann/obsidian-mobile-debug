@@ -317,9 +317,12 @@ async def read_runtime_state(session: Any, plugin: str | None) -> dict[str, Any]
 
 
 async def enable_plugin(session: Any, plugin: str) -> dict[str, Any]:
+    # setEnable(true) first (as on Android): Restricted Mode would record the
+    # id but never instantiate the plugin until community plugins are enabled.
     return await ev(session, f"""(async () => {{
         const id = {js(plugin)};
         try {{
+            if (app.plugins.setEnable) await app.plugins.setEnable(true);
             await app.plugins.loadManifests();
             if (app.plugins.plugins[id]) await app.plugins.disablePlugin(id);
             await (app.plugins.enablePluginAndSave
@@ -737,7 +740,9 @@ async def cmd_provision(lockdown: Any, args: argparse.Namespace) -> int:
         async with inspector_session(lockdown, args.bundle) as (_target, session):
             current = await ev(session, prov.CURRENT_SELECTED_VAULT_JS)
             open_path = prov.derive_sibling_vault_path(current, vault_name)
-            opened = await ev(session, prov.open_vault_js(open_path))
+            opened = await ev(
+                session, prov.open_vault_js(open_path, trust_plugins=bool(args.plugin))
+            )
 
     report = {
         "action": "provision",

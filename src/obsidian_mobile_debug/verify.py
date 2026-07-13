@@ -106,11 +106,13 @@ async def _with_vault_session(
         await asyncio.sleep(RECONNECT_POLL_SECONDS)
 
 
-async def _ios_switch_vault(lockdown: Any, bundle: str, open_path: str) -> dict[str, Any]:
+async def _ios_switch_vault(
+    lockdown: Any, bundle: str, open_path: str, trust_plugins: bool = False,
+) -> dict[str, Any]:
     from . import ios, provision as prov
 
     async with ios.inspector_session_unlocked(lockdown, bundle) as (_target, session):
-        return await ios.ev(session, prov.open_vault_js(open_path))
+        return await ios.ev(session, prov.open_vault_js(open_path, trust_plugins=trust_plugins))
 
 
 def _ios_runtime_phase(args: argparse.Namespace, probes: list[tuple[str, str]]):
@@ -211,7 +213,11 @@ async def cmd_verify_ios(lockdown: Any, args: argparse.Namespace) -> int:
                 raise _AbortAssertions
 
             # 3. switch into the scratch vault; 4-6. runtime phase in ONE session.
-            summary["open"] = await _ios_switch_vault(lockdown, args.bundle, scratch_open_path)
+            # trust_plugins pre-clears the Restricted Mode prompt so the run is
+            # hands-off; restore below deliberately never sets it.
+            summary["open"] = await _ios_switch_vault(
+                lockdown, args.bundle, scratch_open_path, trust_plugins=True
+            )
             switched = True
             phase = await _with_vault_session(
                 lockdown, args.bundle, vault_name, _ios_runtime_phase(args, probes)
@@ -302,6 +308,14 @@ async def _ios_restore_and_cleanup(
                 failures.append("scratch vault cleanup incomplete")
         finally:
             await afc.close()
+
+        # Deregister the removed vault (switcher entry + trust flag).
+        scratch_open_path = (summary.get("open") or {}).get("opened")
+        if ok and scratch_open_path:
+            async with ios.inspector_session_unlocked(lockdown, args.bundle) as (_target, session):
+                summary["cleanup"]["forgot"] = await ios.ev(
+                    session, prov.forget_vault_js(scratch_open_path)
+                )
     elif "cleanup" not in summary:
         summary["cleanup"] = {"attempted": False, "reason": "--cleanup not requested"}
 
@@ -387,7 +401,11 @@ async def cmd_verify_android(args: argparse.Namespace) -> int:
             }
 
             # 3. switch into the scratch vault (absolute path form) and wait.
-            summary["open"] = await android.ev(args.port, prov.open_vault_js(vault_path))
+            # trust_plugins pre-clears the Restricted Mode prompt; restore
+            # below deliberately never sets it.
+            summary["open"] = await android.ev(
+                args.port, prov.open_vault_js(vault_path, trust_plugins=True)
+            )
             switched = True
             await _android_wait_for_vault(args.port, vault_name)
 
@@ -476,5 +494,9 @@ async def _android_restore_and_cleanup(
         vault_path = summary["vault"]["path"]
         android.run_adb(["shell", "rm", "-rf", vault_path])
         summary["cleanup"] = {"attempted": True, "ok": True, "vaultPath": vault_path}
+        # Deregister the removed vault (switcher entry + trust flag).
+        summary["cleanup"]["forgot"] = await android.ev(
+            args.port, prov.forget_vault_js(vault_path)
+        )
     elif "cleanup" not in summary:
         summary["cleanup"] = {"attempted": False, "reason": "--cleanup not requested"}
