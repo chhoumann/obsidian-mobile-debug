@@ -99,6 +99,7 @@ WebView app. Android commands take `--port` (default `9333`) for the CDP forward
 | `diagnose [--plugin <id>]` | Report runtime state (vault, platform, plugin counts); with `--plugin`, add that plugin's install/enable state and its AFC files. |
 | `deploy --plugin <id> --repo <path>` | Back up, then AFC-push the build (`main.js` + `manifest.json`, plus `styles.css` if present) into the vault, then reload. |
 | `provision [--plugin <id> --repo <path>] [--open] [--remove]` | Create a scratch vault with an `.obsidian` skeleton (optionally deploy a plugin), open it, or tear it down. See [Provision](#provisioning-a-scratch-vault). |
+| `verify --plugin <id> --repo <path> [--probe <file\|name>]...` | The complete verification loop in one command. See [Verify](#the-verify-loop). |
 | `reload --plugin <id>` | disable -> enable the plugin. |
 | `logs [--seconds N]` | Stream console + uncaught errors. |
 | `restore [--backup <dir>]` | Restore a pre-deploy backup (newest by default). |
@@ -113,6 +114,7 @@ WebView app. Android commands take `--port` (default `9333`) for the CDP forward
 | `diagnose [--plugin <id>]` | Report runtime state; with `--plugin`, add that plugin's state. |
 | `deploy --plugin <id> --repo <path> --vault-path <abs>` | `adb push` the build to `<vault-path>/.obsidian/plugins/<id>`, then reload. |
 | `provision [--plugin <id> --repo <path>] [--open] [--remove]` | Create a scratch vault with an `.obsidian` skeleton (optionally deploy a plugin), open it, or tear it down. See [Provision](#provisioning-a-scratch-vault). |
+| `verify --plugin <id> --repo <path> [--probe <file\|name>]...` | The complete verification loop in one command. See [Verify](#the-verify-loop). |
 | `reload --plugin <id>` | `setEnable(true)` then disable -> enable the plugin. |
 | `logs [--seconds N]` | Stream logcat lines matching Obsidian/WebView/crash. |
 
@@ -197,6 +199,41 @@ of `test`, `scratch`, `debug`, `sandbox`) without `--confirm-real-vault`; the
 default `omd-scratch` always passes. `--remove` is **scratch-only by design**: it
 deletes the whole vault directory, so it has no override at all and can never
 remove a real vault - not even with `--confirm-real-vault`.
+
+## The verify loop
+
+`omd <platform> verify` runs the complete plugin verification loop the
+primitives above compose by hand - one command, one owned inspector/CDP
+transport, one structured JSON summary:
+
+```bash
+omd ios verify \
+  --plugin quickadd \
+  --repo ~/Developer/quickadd \
+  --probe core_smoke \
+  --probe ./probes/mobile-date-parser.js \
+  --logs-seconds 10 \
+  --cleanup
+```
+
+It diagnoses the runtime, provisions a plugin-namespaced scratch vault
+(`<plugin>-omd-scratch`; artifacts hash-verified on iOS), switches Obsidian
+into it, enables the plugin and asserts it is enabled + instantiated, runs
+each `--probe` while capturing every console argument on the same session
+(no second process contending for the inspector), optionally keeps capturing
+for `--logs-seconds`, then restores the original vault (skip with
+`--keep-vault`) and - with `--cleanup`, only after a verified restore -
+removes the scratch vault.
+
+Exit codes: `0` when every assertion passed, `2` when an assertion failed (a
+probe returned `ok:false` or threw, the plugin did not instantiate, artifact
+verification failed), `1` on transport/tool failure. On a transport failure
+after the vault switch, a best-effort restore still runs and the partial
+summary is printed. The summary records each step's evidence: original and
+scratch vault identities (name, path, storage kind), pushed-artifact hashes,
+runtime plugin state, per-probe results with captured console events and
+durations, and restore/cleanup status - so an agent or CI can consume a
+single JSON document as proof.
 
 ## Safety model
 

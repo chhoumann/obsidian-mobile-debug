@@ -1,7 +1,8 @@
 """``omd`` command-line entry point.
 
 Two platform groups - ``omd ios <cmd>`` and ``omd android <cmd>`` - share a
-common command surface (pages / eval / diagnose / reload / deploy / logs). The
+common command surface (pages / eval / diagnose / reload / deploy / provision /
+verify / logs). The
 parser is pure argparse: it imports no transport, so ``omd --help``,
 ``omd ios --help`` and ``omd android --help`` run without a device connected or
 pymobiledevice3/adb installed. The platform module (which touches the device) is
@@ -65,6 +66,32 @@ def _add_provision_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--test-vault", help="whitelist this exact vault name as a safe scratch vault")
 
 
+def _add_verify_args(parser: argparse.ArgumentParser) -> None:
+    from .provision import DEFAULT_VAULT
+
+    parser.add_argument("--plugin", required=True, help="plugin id to verify")
+    parser.add_argument("--repo", help="plugin repo path (derives main.js/manifest.json/styles.css)")
+    parser.add_argument("--main", help="path to built main.js (overrides --repo)")
+    parser.add_argument("--manifest", help="path to manifest.json (overrides --repo)")
+    parser.add_argument("--styles", help="path to styles.css (optional)")
+    parser.add_argument("--vault", default=None,
+                        help=f"scratch vault name (default: <plugin>-{DEFAULT_VAULT})")
+    parser.add_argument("--data", help="seed the plugin's data.json from this file (first provision only)")
+    parser.add_argument("--probe", action="append",
+                        help="probe to run (bundled name or .js path); repeatable; default: core_smoke")
+    parser.add_argument("--probe-timeout", type=float, default=120.0,
+                        help="per-probe evaluation timeout in seconds")
+    parser.add_argument("--logs-seconds", type=int, default=0,
+                        help="keep capturing console output this long after the probes")
+    parser.add_argument("--keep-vault", action="store_true",
+                        help="stay in the scratch vault afterwards (skip restoring the original)")
+    parser.add_argument("--cleanup", action="store_true",
+                        help="remove the scratch vault after restoring the original vault")
+    parser.add_argument("--confirm-real-vault", action="store_true",
+                        help="acknowledge verifying against a non-scratch-named vault")
+    parser.add_argument("--test-vault", help="whitelist this exact vault name as a safe scratch vault")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="omd",
@@ -111,6 +138,10 @@ def build_parser() -> argparse.ArgumentParser:
                           help="create (or --remove) a scratch vault with an .obsidian skeleton")
     _add_provision_args(p)
 
+    p = ios_sub.add_parser("verify", parents=[common],
+                          help="run the full plugin verification loop in a scratch vault")
+    _add_verify_args(p)
+
     p = ios_sub.add_parser("logs", parents=[common], help="stream console + uncaught errors")
     p.add_argument("--seconds", type=int, default=60)
 
@@ -146,6 +177,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = android_sub.add_parser("provision", parents=[common, android_common],
                               help="create (or --remove) a scratch vault with an .obsidian skeleton")
     _add_provision_args(p)
+    p.add_argument("--vault-root", default=ANDROID_DEFAULT_ROOT,
+                   help=f"on-device parent dir for the scratch vault (default: {ANDROID_DEFAULT_ROOT})")
+
+    p = android_sub.add_parser("verify", parents=[common, android_common],
+                              help="run the full plugin verification loop in a scratch vault")
+    _add_verify_args(p)
     p.add_argument("--vault-root", default=ANDROID_DEFAULT_ROOT,
                    help=f"on-device parent dir for the scratch vault (default: {ANDROID_DEFAULT_ROOT})")
 

@@ -191,6 +191,95 @@ async def ev(port: int, expr: str, *, timeout: float = 120.0, await_promise: boo
             return result.get("result", {}).get("value")
 
 
+CDP_LEVELS = {"log": "log", "info": "info", "warning": "warning", "error": "error",
+              "debug": "debug", "assert": "error", "trace": "debug"}
+
+
+def format_cdp_console_event(params: dict[str, Any], received_at: str) -> dict[str, Any]:
+    """One Runtime.consoleAPICalled event in the same shape as iOS console events."""
+    from .console_fmt import render_arg_text, render_remote_object
+
+    args = [render_remote_object(arg) for arg in params.get("args") or []]
+    event: dict[str, Any] = {
+        "event": "console",
+        "level": CDP_LEVELS.get(params.get("type"), "log"),
+        "source": "console-api",
+        "receivedAt": received_at,
+        "args": args,
+        "text": " ".join(render_arg_text(arg) for arg in args),
+    }
+    if params.get("timestamp") is not None:
+        event["deviceTimestamp"] = params["timestamp"]
+    return event
+
+
+async def ev_with_console(
+    port: int, expr: str, *, timeout: float = 120.0, drain_seconds: float = 1.0,
+) -> tuple[Any, list[dict[str, Any]]]:
+    """Evaluate JS while capturing console output on the SAME CDP socket.
+
+    Unlike ``ev()``, the websocket stays open with Runtime events enabled, so
+    every ``Runtime.consoleAPICalled`` fired during (and briefly after, per
+    ``drain_seconds``) the evaluation is collected alongside the result -
+    probe execution under log capture without a second contending client.
+    """
+    from datetime import datetime, timezone
+
+    import websockets
+
+    def now() -> str:
+        return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+    events: list[dict[str, Any]] = []
+    ws_url, _url = discover_page_ws(port)
+    async with websockets.connect(ws_url, max_size=None, open_timeout=20) as ws:
+        await ws.send(json.dumps({"id": 1, "method": "Runtime.enable"}))
+        await ws.send(json.dumps({
+            "id": 2,
+            "method": "Runtime.evaluate",
+            "params": {
+                "expression": expr,
+                "returnByValue": True,
+                "awaitPromise": True,
+                "allowUnsafeEvalBlockedByCSP": True,
+                "userGesture": True,
+            },
+        }))
+        value: Any = None
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise TimeoutError(f"eval timed out after {timeout}s: {expr[:120]}")
+            response = json.loads(await asyncio.wait_for(ws.recv(), remaining))
+            if response.get("method") == "Runtime.consoleAPICalled":
+                events.append(format_cdp_console_event(response.get("params") or {}, now()))
+                continue
+            if response.get("id") != 2:
+                continue
+            result = response.get("result", {})
+            if "exceptionDetails" in result:
+                exc = result["exceptionDetails"]
+                raise RuntimeError(exc.get("exception", {}).get("description") or json.dumps(exc))
+            value = result.get("result", {}).get("value")
+            break
+
+        # Trailing console output (e.g. async logging right after resolve).
+        drain_deadline = loop.time() + drain_seconds
+        while True:
+            remaining = drain_deadline - loop.time()
+            if remaining <= 0:
+                break
+            try:
+                response = json.loads(await asyncio.wait_for(ws.recv(), remaining))
+            except (TimeoutError, asyncio.TimeoutError):
+                break
+            if response.get("method") == "Runtime.consoleAPICalled":
+                events.append(format_cdp_console_event(response.get("params") or {}, now()))
+    return value, events
+
+
 async def read_runtime_state(port: int, plugin: str | None) -> dict[str, Any]:
     plugin_expr = "null" if not plugin else f"""(() => {{
         const id = {js(plugin)};
@@ -441,6 +530,12 @@ async def cmd_logs(args: argparse.Namespace) -> int:
     return 0
 
 
+async def cmd_verify(args: argparse.Namespace) -> int:
+    from .verify import cmd_verify_android
+
+    return await cmd_verify_android(args)
+
+
 # ---------- dispatch ----------
 _COMMANDS = {
     "pages": cmd_pages,
@@ -449,6 +544,7 @@ _COMMANDS = {
     "reload": cmd_reload,
     "deploy": cmd_deploy,
     "provision": cmd_provision,
+    "verify": cmd_verify,
     "logs": cmd_logs,
 }
 
