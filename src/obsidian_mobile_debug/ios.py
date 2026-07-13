@@ -160,22 +160,43 @@ def device_id(lockdown: Any) -> str:
 
 
 @contextlib.asynccontextmanager
-async def inspector_session(lockdown: Any, bundle: str):
+async def inspector_session_unlocked(lockdown: Any, bundle: str):
+    """One inspector session without the cross-process lock.
+
+    Only for callers that already hold the inspector lock themselves (verify
+    holds it once across several sessions; the flock is not reentrant, so
+    nesting the locked variant would contend against its own process).
+    """
     from pymobiledevice3.services.webinspector import WebinspectorService
 
+    inspector = WebinspectorService(lockdown=lockdown)
+    await inspector.connect()
+    session = None
+    try:
+        async with inspector:
+            target, session = await open_session(inspector, bundle)
+            yield target, session
+    finally:
+        # pymobiledevice3 never cancels the session's busy-polling receive
+        # task; verify opens several sessions per run, so leaked tasks would
+        # spin (sleep(0) loop) for the rest of the process.
+        receive_task = getattr(session, "_receive_task", None)
+        if receive_task is not None:
+            receive_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await receive_task
+        await inspector.close()
+
+
+@contextlib.asynccontextmanager
+async def inspector_session(lockdown: Any, bundle: str):
     from .lock import inspector_lock
 
     # Acquired before WebinspectorService.connect(): a second OMD process would
     # otherwise hang on the shared inspector session until the first exits.
     with inspector_lock(device_id(lockdown), bundle):
-        inspector = WebinspectorService(lockdown=lockdown)
-        await inspector.connect()
-        try:
-            async with inspector:
-                target, session = await open_session(inspector, bundle)
-                yield target, session
-        finally:
-            await inspector.close()
+        async with inspector_session_unlocked(lockdown, bundle) as pair:
+            yield pair
 
 
 def page_matches_bundle(page: Any, bundle: str) -> bool:
@@ -305,9 +326,12 @@ async def read_runtime_state(session: Any, plugin: str | None) -> dict[str, Any]
 
 
 async def enable_plugin(session: Any, plugin: str) -> dict[str, Any]:
+    # setEnable(true) first (as on Android): Restricted Mode would record the
+    # id but never instantiate the plugin until community plugins are enabled.
     return await ev(session, f"""(async () => {{
         const id = {js(plugin)};
         try {{
+            if (app.plugins.setEnable) await app.plugins.setEnable(true);
             await app.plugins.loadManifests();
             if (app.plugins.plugins[id]) await app.plugins.disablePlugin(id);
             await (app.plugins.enablePluginAndSave
@@ -647,6 +671,44 @@ async def existing_vault_files_afc(afc: Any, vault_path: str) -> set[str]:
     return set(manifest)
 
 
+async def provision_scratch_vault(
+    afc: Any, vault_name: str, plugin: str | None,
+    files: dict[str, str] | None, data_seed: bytes | None,
+) -> dict[str, Any]:
+    """Write the vault skeleton (and plugin artifacts, hash-verified) over AFC.
+
+    Shared by `provision` and `verify`. Idempotency lives in
+    ``prov.plan_writes``; every plugin file push is byte/hash verified.
+    """
+    from . import provision as prov
+
+    vault_path = f"{prov.IOS_DOCUMENTS_ROOT}/{vault_name}"
+    skeleton = prov.vault_skeleton(plugin, data_seed)
+    existing = await existing_vault_files_afc(afc, vault_path)
+    to_write = prov.plan_writes(skeleton, existing)
+    for entry in to_write:
+        full = f"{vault_path}/{entry.relpath}"
+        await afc.makedirs(posixpath.dirname(full))
+        await afc.set_file_contents(full, entry.content)
+
+    plugin_report: dict[str, Any] | None = None
+    if files:
+        pdir = plugin_dir_for(vault_path, plugin)
+        await afc.makedirs(pdir)
+        pushed = {
+            name: await afc_put_verified(afc, f"{pdir}/{name}", Path(path).read_bytes())
+            for name, path in files.items()
+        }
+        plugin_report = {"pluginDir": pdir, "pushed": pushed}
+
+    return {
+        "vaultPath": vault_path,
+        "wrote": [entry.relpath for entry in to_write],
+        "skipped": sorted(existing - {entry.relpath for entry in to_write}),
+        "plugin": plugin_report,
+    }
+
+
 async def cmd_provision(lockdown: Any, args: argparse.Namespace) -> int:
     from . import provision as prov
 
@@ -674,24 +736,8 @@ async def cmd_provision(lockdown: Any, args: argparse.Namespace) -> int:
         )
         files = resolve_plugin_files(args) if args.plugin else None
         data_seed = Path(args.data).expanduser().read_bytes() if args.data else None
-
-        skeleton = prov.vault_skeleton(args.plugin, data_seed)
-        existing = await existing_vault_files_afc(afc, vault_path)
-        to_write = prov.plan_writes(skeleton, existing)
-        for entry in to_write:
-            full = f"{vault_path}/{entry.relpath}"
-            await afc.makedirs(posixpath.dirname(full))
-            await afc.set_file_contents(full, entry.content)
-
-        plugin_report: dict[str, Any] | None = None
-        if files:
-            pdir = plugin_dir_for(vault_path, args.plugin)
-            await afc.makedirs(pdir)
-            pushed = {
-                name: await afc_put_verified(afc, f"{pdir}/{name}", Path(path).read_bytes())
-                for name, path in files.items()
-            }
-            plugin_report = {"pluginDir": pdir, "pushed": pushed}
+        provisioned = await provision_scratch_vault(afc, vault_name, args.plugin, files, data_seed)
+        plugin_report = provisioned["plugin"]
     finally:
         await afc.close()
 
@@ -703,7 +749,9 @@ async def cmd_provision(lockdown: Any, args: argparse.Namespace) -> int:
         async with inspector_session(lockdown, args.bundle) as (_target, session):
             current = await ev(session, prov.CURRENT_SELECTED_VAULT_JS)
             open_path = prov.derive_sibling_vault_path(current, vault_name)
-            opened = await ev(session, prov.open_vault_js(open_path))
+            opened = await ev(
+                session, prov.open_vault_js(open_path, trust_plugins=bool(args.plugin))
+            )
 
     report = {
         "action": "provision",
@@ -715,8 +763,8 @@ async def cmd_provision(lockdown: Any, args: argparse.Namespace) -> int:
         # same-name vault Obsidian may have open could still be iCloud or
         # external - `diagnose` reports which one is actually selected.
         "storageKind": "app-container",
-        "wrote": [entry.relpath for entry in to_write],
-        "skipped": sorted(existing - {entry.relpath for entry in to_write}),
+        "wrote": provisioned["wrote"],
+        "skipped": provisioned["skipped"],
         "plugin": plugin_report,
         "opened": opened,
         "openVaultHint": prov.open_hint(args.open, args.plugin, "ios"),
@@ -806,6 +854,12 @@ def cmd_backups(args: argparse.Namespace) -> int:
     return 0
 
 
+async def cmd_verify(lockdown: Any, args: argparse.Namespace) -> int:
+    from .verify import cmd_verify_ios
+
+    return await cmd_verify_ios(lockdown, args)
+
+
 # ---------- dispatch ----------
 _ASYNC_COMMANDS = {
     "pages": cmd_pages,
@@ -816,6 +870,7 @@ _ASYNC_COMMANDS = {
     "deploy": cmd_deploy,
     "provision": cmd_provision,
     "restore": cmd_restore,
+    "verify": cmd_verify,
     "logs": cmd_logs,
 }
 

@@ -176,10 +176,47 @@ EXTERNAL_VAULTS_KEY = "mobile-external-vaults"
 
 CURRENT_SELECTED_VAULT_JS = f'localStorage.getItem({json.dumps(SELECTED_VAULT_KEY)})'
 
+# Per-vault community-plugins trust flag ("Restricted Mode" off), keyed by the
+# vault's recorded path. Obsidian mobile shows a manual Trust prompt on first
+# open of an unknown vault whose community-plugins.json lists plugins; setting
+# this key BEFORE the switch is what pressing Trust would have written, so a
+# provisioned scratch vault opens hands-off. (Discovered by dumping
+# localStorage after pressing Trust on-device.)
+TRUST_KEY_PREFIX = "enable-plugin-"
 
-def open_vault_js(vault_abs_path: str) -> str:
-    """JS that registers + selects an on-device vault path and reloads into it."""
+
+def trust_vault_js(vault_path: str) -> str:
+    return f'localStorage.setItem({json.dumps(TRUST_KEY_PREFIX + vault_path)}, "true")'
+
+
+def forget_vault_js(vault_path: str) -> str:
+    """JS that deregisters a (removed) vault and drops its trust flag.
+
+    Without this, a deleted scratch vault keeps a dead entry in the vault
+    switcher (the external-vaults registry) and a stale trust key.
+    """
+    path = json.dumps(vault_path)
+    return (
+        "(() => {"
+        f"const p = {path};"
+        f"const reg = JSON.parse(localStorage.getItem({json.dumps(EXTERNAL_VAULTS_KEY)}) || '[]')"
+        ".filter((entry) => entry !== p);"
+        f"localStorage.setItem({json.dumps(EXTERNAL_VAULTS_KEY)}, JSON.stringify(reg));"
+        f"localStorage.removeItem({json.dumps(TRUST_KEY_PREFIX)} + p);"
+        "return { forgot: p, registered: reg };"
+        "})()"
+    )
+
+
+def open_vault_js(vault_abs_path: str, trust_plugins: bool = False) -> str:
+    """JS that registers + selects an on-device vault path and reloads into it.
+
+    ``trust_plugins`` pre-trusts the vault (skips the Restricted Mode prompt).
+    Only pass it for OMD-provisioned scratch vaults - restoring a user's own
+    vault must never override their trust decision.
+    """
     path = json.dumps(vault_abs_path)
+    trust = f"{trust_vault_js(vault_abs_path)};" if trust_plugins else ""
     return (
         "(() => {"
         f"const p = {path};"
@@ -187,6 +224,7 @@ def open_vault_js(vault_abs_path: str) -> str:
         "if (!reg.includes(p)) reg.push(p);"
         f"localStorage.setItem({json.dumps(EXTERNAL_VAULTS_KEY)}, JSON.stringify(reg));"
         f"localStorage.setItem({json.dumps(SELECTED_VAULT_KEY)}, p);"
+        f"{trust}"
         "setTimeout(() => location.reload(), 300);"
         "return { opened: p, registered: reg };"
         "})()"
