@@ -155,14 +155,19 @@ def device_id(lockdown: Any) -> str:
 async def inspector_session(lockdown: Any, bundle: str):
     from pymobiledevice3.services.webinspector import WebinspectorService
 
-    inspector = WebinspectorService(lockdown=lockdown)
-    await inspector.connect()
-    try:
-        async with inspector:
-            target, session = await open_session(inspector, bundle)
-            yield target, session
-    finally:
-        await inspector.close()
+    from .lock import inspector_lock
+
+    # Acquired before WebinspectorService.connect(): a second OMD process would
+    # otherwise hang on the shared inspector session until the first exits.
+    with inspector_lock(device_id(lockdown), bundle):
+        inspector = WebinspectorService(lockdown=lockdown)
+        await inspector.connect()
+        try:
+            async with inspector:
+                target, session = await open_session(inspector, bundle)
+                yield target, session
+        finally:
+            await inspector.close()
 
 
 def page_matches_bundle(page: Any, bundle: str) -> bool:
@@ -406,18 +411,21 @@ def latest_backup() -> Path:
 async def cmd_pages(lockdown: Any, args: argparse.Namespace) -> int:
     from pymobiledevice3.services.webinspector import WebinspectorService
 
-    inspector = WebinspectorService(lockdown=lockdown)
-    await inspector.connect()
-    try:
-        async with inspector:
-            pages = await inspector.get_open_application_pages(timeout=3)
-            if args.json:
-                print(json.dumps([str(page) for page in pages], indent=2, ensure_ascii=False))
-            else:
-                for page in pages:
-                    print(page)
-    finally:
-        await inspector.close()
+    from .lock import inspector_lock
+
+    with inspector_lock(device_id(lockdown), args.bundle):
+        inspector = WebinspectorService(lockdown=lockdown)
+        await inspector.connect()
+        try:
+            async with inspector:
+                pages = await inspector.get_open_application_pages(timeout=3)
+                if args.json:
+                    print(json.dumps([str(page) for page in pages], indent=2, ensure_ascii=False))
+                else:
+                    for page in pages:
+                        print(page)
+        finally:
+            await inspector.close()
     return 0
 
 
