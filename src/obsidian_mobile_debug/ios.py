@@ -171,11 +171,20 @@ async def inspector_session_unlocked(lockdown: Any, bundle: str):
 
     inspector = WebinspectorService(lockdown=lockdown)
     await inspector.connect()
+    session = None
     try:
         async with inspector:
             target, session = await open_session(inspector, bundle)
             yield target, session
     finally:
+        # pymobiledevice3 never cancels the session's busy-polling receive
+        # task; verify opens several sessions per run, so leaked tasks would
+        # spin (sleep(0) loop) for the rest of the process.
+        receive_task = getattr(session, "_receive_task", None)
+        if receive_task is not None:
+            receive_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await receive_task
         await inspector.close()
 
 
