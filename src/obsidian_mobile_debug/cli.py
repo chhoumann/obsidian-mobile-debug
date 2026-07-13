@@ -47,8 +47,9 @@ def _add_deploy_args(parser: argparse.ArgumentParser) -> None:
 def _add_provision_args(parser: argparse.ArgumentParser) -> None:
     from .provision import DEFAULT_VAULT
 
-    parser.add_argument("--vault", default=DEFAULT_VAULT,
-                        help=f"scratch vault name (default: {DEFAULT_VAULT})")
+    parser.add_argument("--vault", default=None,
+                        help=f"scratch vault name (default: <plugin>-{DEFAULT_VAULT} with "
+                             f"--plugin, else {DEFAULT_VAULT})")
     parser.add_argument("--plugin", help="also deploy this plugin and enable it in the vault")
     parser.add_argument("--repo", help="plugin repo path (derives main.js/manifest.json/styles.css)")
     parser.add_argument("--main", help="path to built main.js (overrides --repo)")

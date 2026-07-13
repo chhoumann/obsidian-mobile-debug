@@ -353,7 +353,10 @@ def push_plugin_files(plugin_dir: str, files: dict[str, str]) -> None:
 async def cmd_provision(args: argparse.Namespace) -> int:
     from . import provision as prov
 
-    vault_path = android_vault_dir(args.vault_root, args.vault)
+    requested_name, vault_name_source = prov.resolve_vault_name(
+        args.vault, getattr(args, "plugin", None)
+    )
+    vault_path = android_vault_dir(args.vault_root, requested_name)
     vault_name = posixpath.basename(vault_path)
 
     if args.remove:
@@ -362,7 +365,8 @@ async def cmd_provision(args: argparse.Namespace) -> int:
         if existed:
             run_adb(["shell", "rm", "-rf", vault_path])
         print(json.dumps({"action": "remove", "vaultPath": vault_path,
-                          "vaultName": vault_name, "removed": existed}, indent=2))
+                          "vaultName": vault_name, "vaultNameSource": vault_name_source,
+                          "removed": existed}, indent=2))
         return 0
 
     prov.guard_provision_vault(
@@ -392,6 +396,7 @@ async def cmd_provision(args: argparse.Namespace) -> int:
         "action": "provision",
         "vaultPath": vault_path,
         "vaultName": vault_name,
+        "vaultNameSource": vault_name_source,
         "wrote": [entry.relpath for entry in to_write],
         "skipped": sorted(existing - {entry.relpath for entry in to_write}),
         "plugin": plugin_report,

@@ -70,7 +70,8 @@ def test_bundle_override():
 def test_ios_provision_defaults():
     args = parse("ios", "provision")
     assert args.cmd == "provision"
-    assert args.vault == "omd-scratch"
+    # None means "derive": <plugin>-omd-scratch with --plugin, else omd-scratch.
+    assert args.vault is None
     assert args.plugin is None
     assert args.remove is False
     assert args.confirm_real_vault is False
@@ -86,7 +87,7 @@ def test_ios_provision_with_plugin_and_data():
 
 def test_android_provision_defaults_root():
     args = parse("android", "provision")
-    assert args.vault == "omd-scratch"
+    assert args.vault is None
     assert args.vault_root == "/storage/emulated/0/Documents"
     assert args.port == DEFAULT_CDP_PORT
 
