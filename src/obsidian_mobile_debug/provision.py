@@ -31,6 +31,39 @@ SAFE_VAULT_TOKENS = ("test", "scratch", "debug", "sandbox")
 # safe-vault guard without --confirm-real-vault.
 DEFAULT_VAULT = "omd-scratch"
 
+
+def sanitize_vault_segment(value: str) -> str:
+    """A plugin id reduced to a stable, path-safe, lowercase name segment.
+
+    Collapses whitespace and anything outside [a-z0-9_.-] to single dashes so
+    names with spaces or path characters ("My Plugin!", "a/b") stay valid vault
+    folder names and derive the same segment on every rerun.
+    """
+    import re
+
+    return re.sub(r"[^a-z0-9_.-]+", "-", value.lower()).strip("-.")
+
+
+def resolve_vault_name(explicit: str | None, plugin_id: str | None) -> tuple[str, str]:
+    """The scratch-vault name to use, plus where it came from.
+
+    Returns ``(name, source)`` with source one of ``explicit`` (the user passed
+    --vault; behavior unchanged), ``derived`` (namespaced to the plugin, e.g.
+    ``quickadd-omd-scratch``, so two plugins' scratch vaults never collide on
+    the display name), or ``default`` (plugin-agnostic ``omd-scratch``).
+
+    Every derived name ends in ``-{DEFAULT_VAULT}``, which contains "scratch",
+    so it always stays inside the scratch-name safety guard. A plugin id that
+    sanitizes to nothing falls back to the plain default.
+    """
+    if explicit:
+        return explicit, "explicit"
+    if plugin_id:
+        segment = sanitize_vault_segment(plugin_id)
+        if segment:
+            return f"{segment}-{DEFAULT_VAULT}", "derived"
+    return DEFAULT_VAULT, "default"
+
 # On-device roots. iOS vaults live in the app's house_arrest documents
 # container; Android's emulator layout puts a scratch vault under Documents.
 IOS_DOCUMENTS_ROOT = "/Documents"
