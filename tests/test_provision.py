@@ -267,3 +267,43 @@ def test_afc_vault_corresponds_requires_documents_parent():
 
 def test_afc_vault_corresponds_trailing_slash_tolerated():
     assert prov.afc_vault_corresponds(APP_PATH + "/", "omd-scratch") is True
+
+
+# ---------- issue #4: plugin-namespaced default scratch-vault names ----------
+def test_resolve_vault_name_explicit_wins():
+    assert prov.resolve_vault_name("my-scratch", "quickadd") == ("my-scratch", "explicit")
+
+
+def test_resolve_vault_name_derives_from_plugin():
+    assert prov.resolve_vault_name(None, "quickadd") == ("quickadd-omd-scratch", "derived")
+
+
+def test_resolve_vault_name_default_without_plugin():
+    assert prov.resolve_vault_name(None, None) == ("omd-scratch", "default")
+
+
+def test_resolve_vault_name_sanitizes_spaces_and_path_chars():
+    name, source = prov.resolve_vault_name(None, "My Plugin!/..\\v2")
+    assert source == "derived"
+    assert name == "my-plugin-..-v2-omd-scratch"
+    assert "/" not in name and "\\" not in name and " " not in name
+
+
+def test_resolve_vault_name_is_stable_across_reruns():
+    first = prov.resolve_vault_name(None, "Quick Add")
+    assert first == prov.resolve_vault_name(None, "Quick Add")
+
+
+def test_resolve_vault_name_unsanitizable_plugin_falls_back_to_default():
+    assert prov.resolve_vault_name(None, "!!!") == ("omd-scratch", "default")
+
+
+def test_derived_names_always_pass_the_scratch_guard():
+    for plugin in ("quickadd", "My Plugin", "a/b", "UPPER_case.v2"):
+        name, _ = prov.resolve_vault_name(None, plugin)
+        prov.guard_provision_vault(name, confirm_real=False, test_vault=None)  # no raise
+        prov.guard_remove_vault(name)  # no raise
+
+
+def test_sanitize_vault_segment_strips_leading_trailing_dots_and_dashes():
+    assert prov.sanitize_vault_segment("..hidden--") == "hidden"

@@ -163,14 +163,19 @@ def device_id(lockdown: Any) -> str:
 async def inspector_session(lockdown: Any, bundle: str):
     from pymobiledevice3.services.webinspector import WebinspectorService
 
-    inspector = WebinspectorService(lockdown=lockdown)
-    await inspector.connect()
-    try:
-        async with inspector:
-            target, session = await open_session(inspector, bundle)
-            yield target, session
-    finally:
-        await inspector.close()
+    from .lock import inspector_lock
+
+    # Acquired before WebinspectorService.connect(): a second OMD process would
+    # otherwise hang on the shared inspector session until the first exits.
+    with inspector_lock(device_id(lockdown), bundle):
+        inspector = WebinspectorService(lockdown=lockdown)
+        await inspector.connect()
+        try:
+            async with inspector:
+                target, session = await open_session(inspector, bundle)
+                yield target, session
+        finally:
+            await inspector.close()
 
 
 def page_matches_bundle(page: Any, bundle: str) -> bool:
@@ -429,18 +434,21 @@ def latest_backup() -> Path:
 async def cmd_pages(lockdown: Any, args: argparse.Namespace) -> int:
     from pymobiledevice3.services.webinspector import WebinspectorService
 
-    inspector = WebinspectorService(lockdown=lockdown)
-    await inspector.connect()
-    try:
-        async with inspector:
-            pages = await inspector.get_open_application_pages(timeout=3)
-            if args.json:
-                print(json.dumps([str(page) for page in pages], indent=2, ensure_ascii=False))
-            else:
-                for page in pages:
-                    print(page)
-    finally:
-        await inspector.close()
+    from .lock import inspector_lock
+
+    with inspector_lock(device_id(lockdown), args.bundle):
+        inspector = WebinspectorService(lockdown=lockdown)
+        await inspector.connect()
+        try:
+            async with inspector:
+                pages = await inspector.get_open_application_pages(timeout=3)
+                if args.json:
+                    print(json.dumps([str(page) for page in pages], indent=2, ensure_ascii=False))
+                else:
+                    for page in pages:
+                        print(page)
+        finally:
+            await inspector.close()
     return 0
 
 
@@ -642,7 +650,9 @@ async def existing_vault_files_afc(afc: Any, vault_path: str) -> set[str]:
 async def cmd_provision(lockdown: Any, args: argparse.Namespace) -> int:
     from . import provision as prov
 
-    vault_name = args.vault
+    vault_name, vault_name_source = prov.resolve_vault_name(
+        args.vault, getattr(args, "plugin", None)
+    )
     vault_path = f"{prov.IOS_DOCUMENTS_ROOT}/{vault_name}"
 
     afc = await afc_open(lockdown, args.bundle)
@@ -655,7 +665,8 @@ async def cmd_provision(lockdown: Any, args: argparse.Namespace) -> int:
                 if undeleted:
                     raise SystemExit(f"Could not fully remove {vault_path}: {undeleted}")
             print(json.dumps({"action": "remove", "vaultPath": vault_path,
-                              "vaultName": vault_name, "removed": existed}, indent=2))
+                              "vaultName": vault_name, "vaultNameSource": vault_name_source,
+                              "removed": existed}, indent=2))
             return 0
 
         prov.guard_provision_vault(
@@ -698,6 +709,7 @@ async def cmd_provision(lockdown: Any, args: argparse.Namespace) -> int:
         "action": "provision",
         "vaultPath": vault_path,
         "vaultName": vault_name,
+        "vaultNameSource": vault_name_source,
         # AFC house_arrest can only write inside the app's own sandbox, so a
         # provisioned vault is app-container-backed by construction. A
         # same-name vault Obsidian may have open could still be iCloud or
@@ -715,20 +727,65 @@ async def cmd_provision(lockdown: Any, args: argparse.Namespace) -> int:
     return 0
 
 
+ERROR_HOOK_JS = """((w) => {
+    if (w.__omdHooked) return "already";
+    w.__omdHooked = true;
+    w.addEventListener("error", (e) => console.error("[onerror]", e.message,
+        (e.filename || "") + ":" + (e.lineno || ""), e.error && e.error.stack || ""));
+    w.addEventListener("unhandledrejection", (e) => console.error("[unhandledrejection]",
+        e.reason && (e.reason.stack || e.reason) || e.reason));
+    return "hooked";
+})(window)"""
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+
+def install_console_capture(session: Any, emit: Any) -> None:
+    """Route Console.messageAdded events to ``emit(message_dict)``.
+
+    Replaces pymobiledevice3's default console handlers on this session: they
+    log only ``message.text`` (the first console argument) and drop the
+    ``parameters`` array holding the rest. Install before ``console_enable()``
+    so the replay of buffered messages already goes through ``emit``. A repeat
+    notification re-emits the previous message with its updated count.
+    """
+    last_message: dict[str, Any] | None = None
+
+    def on_added(response: dict[str, Any]) -> None:
+        nonlocal last_message
+        last_message = response["params"]["message"]
+        emit(last_message)
+
+    def on_repeat(response: dict[str, Any]) -> None:
+        if last_message is None:
+            return
+        repeated = dict(last_message)
+        count = response.get("params", {}).get("count")
+        if count:
+            repeated["repeatCount"] = count
+        emit(repeated)
+
+    session.response_methods["Console.messageAdded"] = on_added
+    session.response_methods["Console.messageRepeatCountUpdated"] = on_repeat
+
+
 async def cmd_logs(lockdown: Any, args: argparse.Namespace) -> int:
+    from .console_fmt import format_console_event, format_console_line
+
     async with inspector_session(lockdown, args.bundle) as (_target, session):
-        await ev(session, """((w) => {
-            if (w.__omdHooked) return "already";
-            w.__omdHooked = true;
-            w.addEventListener("error", (e) => console.error("[onerror]", e.message,
-                (e.filename || "") + ":" + (e.lineno || ""), e.error && e.error.stack || ""));
-            w.addEventListener("unhandledrejection", (e) => console.error("[unhandledrejection]",
-                e.reason && (e.reason.stack || e.reason) || e.reason));
-            return "hooked";
-        })(window)""")
+        await ev(session, ERROR_HOOK_JS)
+
+        def emit(message: dict[str, Any]) -> None:
+            event = format_console_event(message, utc_now_iso())
+            print(json.dumps(event, ensure_ascii=False) if args.json
+                  else format_console_line(event), flush=True)
+
+        install_console_capture(session, emit)
+        if not args.json:
+            print(f"-- streaming console + uncaught errors for {args.seconds}s --")
         await session.console_enable()
-        logging.getLogger("webinspector.console").setLevel(logging.DEBUG)
-        print(f"-- streaming console + uncaught errors for {args.seconds}s --")
         await asyncio.sleep(args.seconds)
     return 0
 
