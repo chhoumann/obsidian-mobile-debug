@@ -213,8 +213,38 @@ def format_cdp_console_event(params: dict[str, Any], received_at: str) -> dict[s
     return event
 
 
+def _utc_now_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+
+async def capture_console_events(port: int, seconds: float) -> list[dict[str, Any]]:
+    """Collect Runtime.consoleAPICalled events for a fixed window (omd logs analog)."""
+    import websockets
+
+    events: list[dict[str, Any]] = []
+    ws_url, _url = discover_page_ws(port)
+    async with websockets.connect(ws_url, max_size=None, open_timeout=20) as ws:
+        await ws.send(json.dumps({"id": 1, "method": "Runtime.enable"}))
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + seconds
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+            try:
+                response = json.loads(await asyncio.wait_for(ws.recv(), remaining))
+            except (TimeoutError, asyncio.TimeoutError):
+                break
+            if response.get("method") == "Runtime.consoleAPICalled":
+                events.append(format_cdp_console_event(response.get("params") or {}, _utc_now_iso()))
+    return events
+
+
 async def ev_with_console(
     port: int, expr: str, *, timeout: float = 120.0, drain_seconds: float = 1.0,
+    events: list[dict[str, Any]] | None = None,
 ) -> tuple[Any, list[dict[str, Any]]]:
     """Evaluate JS while capturing console output on the SAME CDP socket.
 
@@ -222,15 +252,15 @@ async def ev_with_console(
     every ``Runtime.consoleAPICalled`` fired during (and briefly after, per
     ``drain_seconds``) the evaluation is collected alongside the result -
     probe execution under log capture without a second contending client.
-    """
-    from datetime import datetime, timezone
 
+    Pass ``events`` to keep everything captured up to the point an evaluation
+    throws or times out - that failure evidence would otherwise be lost with
+    the raised exception.
+    """
     import websockets
 
-    def now() -> str:
-        return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
-
-    events: list[dict[str, Any]] = []
+    now = _utc_now_iso
+    events = events if events is not None else []
     ws_url, _url = discover_page_ws(port)
     async with websockets.connect(ws_url, max_size=None, open_timeout=20) as ws:
         await ws.send(json.dumps({"id": 1, "method": "Runtime.enable"}))

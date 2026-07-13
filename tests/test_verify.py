@@ -93,3 +93,88 @@ def test_format_cdp_console_event_maps_types_and_args():
 def test_format_cdp_console_event_unknown_type_falls_back_to_log():
     event = format_cdp_console_event({"type": "table", "args": []}, "t")
     assert event["level"] == "log"
+
+
+class _FakeWS:
+    """Minimal websocket stand-in feeding scripted CDP frames."""
+
+    def __init__(self, frames):
+        self.frames = list(frames)
+        self.sent = []
+
+    async def send(self, data):
+        self.sent.append(data)
+
+    async def recv(self):
+        import asyncio
+        if not self.frames:
+            await asyncio.sleep(3600)
+        return self.frames.pop(0)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def _connectable(ws):
+    class _Conn:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return ws
+
+        async def __aexit__(self, *exc):
+            return False
+
+    return lambda *a, **k: _Conn()
+
+
+def test_ev_with_console_preserves_events_on_probe_exception(monkeypatch):
+    """A probe that throws must not discard console output captured before it."""
+    import asyncio
+    import json as _json
+    import sys
+    import types
+
+    from obsidian_mobile_debug import android
+
+    frames = [
+        _json.dumps({"method": "Runtime.consoleAPICalled",
+                     "params": {"type": "error", "args": [{"type": "string", "value": "diag"}]}}),
+        _json.dumps({"id": 2, "result": {"exceptionDetails": {
+            "exception": {"description": "Error: probe blew up"}}}}),
+    ]
+    ws = _FakeWS(frames)
+    monkeypatch.setitem(sys.modules, "websockets", types.SimpleNamespace(connect=_connectable(ws)))
+    monkeypatch.setattr(android, "discover_page_ws", lambda port: ("ws://fake", "url"))
+
+    events = []
+    import pytest as _pytest
+    with _pytest.raises(RuntimeError, match="probe blew up"):
+        asyncio.run(android.ev_with_console(9333, "boom()", timeout=5, events=events))
+    assert len(events) == 1
+    assert events[0]["args"] == ["diag"]
+    assert events[0]["level"] == "error"
+
+
+def test_capture_console_events_collects_until_window_closes(monkeypatch):
+    import asyncio
+    import json as _json
+    import sys
+    import types
+
+    from obsidian_mobile_debug import android
+
+    frames = [
+        _json.dumps({"method": "Runtime.consoleAPICalled",
+                     "params": {"type": "log", "args": [{"type": "string", "value": "tail"}]}}),
+    ]
+    ws = _FakeWS(frames)
+    monkeypatch.setitem(sys.modules, "websockets", types.SimpleNamespace(connect=_connectable(ws)))
+    monkeypatch.setattr(android, "discover_page_ws", lambda port: ("ws://fake", "url"))
+
+    events = asyncio.run(android.capture_console_events(9333, 0.3))
+    assert [event["text"] for event in events] == ["tail"]

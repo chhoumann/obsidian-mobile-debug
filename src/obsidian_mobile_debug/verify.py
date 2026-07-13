@@ -422,17 +422,19 @@ async def cmd_verify_android(args: argparse.Namespace) -> int:
             for ref, source in probes:
                 started = time.monotonic()
                 report: dict[str, Any] = {"probe": ref}
+                # Pre-allocated so a probe that throws or times out still
+                # surrenders the console evidence captured before the error.
+                console: list[dict[str, Any]] = []
                 try:
-                    value, console = await android.ev_with_console(
-                        args.port, source, timeout=args.probe_timeout,
-                        drain_seconds=min(1.0, args.logs_seconds or 1.0),
+                    value, _events = await android.ev_with_console(
+                        args.port, source, timeout=args.probe_timeout, events=console,
                     )
                     report["ok"] = probe_passed(value)
                     report["result"] = value
-                    report["console"] = console
                 except (RuntimeError, TimeoutError) as exc:
                     report["ok"] = False
                     report["error"] = str(exc)
+                report["console"] = console
                 report["durationMs"] = round((time.monotonic() - started) * 1000)
                 probe_reports.append(report)
             summary["probes"] = probe_reports
@@ -440,6 +442,13 @@ async def cmd_verify_android(args: argparse.Namespace) -> int:
                 f"probe {report['probe']!r} failed"
                 for report in probe_reports if not report.get("ok")
             )
+
+            # 6. optional post-probe capture window (the iOS logs analog).
+            if args.logs_seconds:
+                summary["logs"] = {
+                    "seconds": args.logs_seconds,
+                    "console": await android.capture_console_events(args.port, args.logs_seconds),
+                }
         except BaseException:
             summary["error"] = "transport or tool failure - see stderr"
             await _android_restore_and_cleanup(
