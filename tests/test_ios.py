@@ -113,3 +113,18 @@ def test_page_matches_bundle_non_default_is_strict():
 def test_safe_segment():
     assert ios.safe_segment("a/b c") == "a-b-c"
     assert ios.safe_segment("///") == "unknown"
+
+
+def test_guard_real_vault_includes_identity_when_available():
+    from obsidian_mobile_debug import provision as prov
+
+    args = argparse.Namespace(confirm_real_vault=False, test_vault=None)
+    identity = prov.vault_identity(
+        "notes", "/var/mobile/Library/Mobile Documents/iCloud~md~obsidian/Documents/notes"
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        ios.guard_real_vault("notes", args, "deploy", identity)
+    message = str(excinfo.value)
+    assert "Vault identity:" in message
+    assert "icloud" in message
+    assert "Mobile Documents" in message
