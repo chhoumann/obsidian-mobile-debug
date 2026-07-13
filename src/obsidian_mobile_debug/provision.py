@@ -201,14 +201,88 @@ def open_vault_js(vault_abs_path: str) -> str:
 # so a sibling of it would point nowhere the provision wrote.
 APP_CONTAINER_MARKER = "/Containers/Data/Application/"
 
+# iCloud Drive vault roots recorded by mobile Obsidian: the classic
+# "Mobile Documents" container path and the CloudDocs bundle id form.
+ICLOUD_MARKERS = ("/Mobile Documents/", "com~apple~CloudDocs")
+
+
+def classify_storage(selected_path: str | None) -> str:
+    """Storage kind of a vault from its recorded localStorage path.
+
+    A vault display name is not a unique mobile vault identity: two vaults named
+    ``omd-scratch`` can be backed by the app container and by iCloud at the same
+    time. The recorded localStorage path is what tells them apart:
+
+    - ``app-container``: the app's own sandbox (the only storage AFC
+      house_arrest provisioning can reach). Recorded either relative to the
+      sandbox root (``documents/<vault>``, observed on iOS 18 Obsidian) or as
+      an absolute /var/mobile/Containers/Data/Application/<UUID>/... path,
+    - ``icloud``: an iCloud Drive container,
+    - ``external``: any other on-device location (Files-app folder, etc.),
+    - ``unknown``: no path recorded (no vault selected yet).
+    """
+    if not selected_path:
+        return "unknown"
+    if APP_CONTAINER_MARKER in selected_path or _relative_documents_parent(selected_path):
+        return "app-container"
+    if any(marker in selected_path for marker in ICLOUD_MARKERS):
+        return "icloud"
+    return "external"
+
+
+def _relative_documents_parent(selected_path: str) -> str | None:
+    """The ``documents`` prefix (as recorded) of a sandbox-relative vault path.
+
+    Mobile Obsidian records an app-container vault as ``documents/<vault>``;
+    returns that parent segment when the path has this shape, else None.
+    """
+    if selected_path.startswith("/"):
+        return None
+    parent, _, name = selected_path.rpartition("/")
+    if name and parent.lower() == "documents":
+        return parent
+    return None
+
+
+def vault_identity(vault_name: str | None, selected_path: str | None) -> dict[str, object]:
+    """The full identity of the runtime vault: name + backing storage."""
+    return {
+        "vaultName": vault_name,
+        "selectedVaultPath": selected_path,
+        "storageKind": classify_storage(selected_path),
+    }
+
+
+def describe_vault_identity(identity: dict[str, object]) -> str:
+    """One-line human form: name, storage kind, and backing path."""
+    name = identity.get("vaultName")
+    path = identity.get("selectedVaultPath")
+    return f"{name!r} ({identity.get('storageKind')}, {path or 'no recorded path'})"
+
+
+def afc_vault_corresponds(selected_path: str | None, afc_vault_name: str) -> bool:
+    """Whether the AFC vault at /Documents/<name> is the vault Obsidian has open.
+
+    True only when the open vault lives in the app container (the storage AFC
+    writes to) AND its path basename matches the AFC folder name. A same-name
+    iCloud/external vault fails this even though the display names collide.
+    """
+    return (
+        classify_storage(selected_path) == "app-container"
+        and selected_path is not None
+        and selected_path.rstrip("/").rsplit("/", 1)[-1] == afc_vault_name
+    )
+
 
 def derive_sibling_vault_path(current_selected: str | None, vault_name: str) -> str:
-    """Absolute path of a sibling vault next to the currently-open one.
+    """Recorded path of a sibling vault next to the currently-open one.
 
-    iOS vaults live at a sandbox-absolute path (``/var/mobile/Containers/.../Documents/<vault>``)
-    that AFC's ``/Documents`` view does not reveal. The open vault's recorded path
-    ends in its own name, so its parent is the container Documents dir; the new
-    scratch vault is a sibling there.
+    An app-container vault's recorded path ends in its own name, so its parent
+    is the container Documents dir and the new scratch vault is a sibling
+    there. Obsidian records that in two shapes, both preserved here: relative
+    ``documents/<vault>`` (observed on iOS 18) and sandbox-absolute
+    ``/var/mobile/Containers/.../Documents/<vault>`` (which AFC's
+    ``/Documents`` view does not reveal).
 
     Only valid when the open vault is itself in the app container: provisioning
     writes through AFC into that container's ``Documents``, so a sibling of an
@@ -221,15 +295,18 @@ def derive_sibling_vault_path(current_selected: str | None, vault_name: str) -> 
             f"(localStorage {SELECTED_VAULT_KEY!r} is empty). Open any vault in the app once, "
             "then rerun with --open - or open the scratch vault by hand."
         )
+    relative_parent = _relative_documents_parent(current_selected)
+    if relative_parent is not None:
+        return f"{relative_parent}/{vault_name}"
     parent = current_selected.rsplit("/", 1)[0]
     if APP_CONTAINER_MARKER not in current_selected or not parent.endswith("/Documents"):
         raise SystemExit(
             f"Cannot open the scratch vault automatically: the vault currently open in Obsidian "
-            f"({current_selected!r}) is not in the app's Documents container, so the provisioned "
-            f"vault at .../Documents/{vault_name} is not a sibling of it and --open would reload "
-            "into an empty vault. The scratch vault was still provisioned - open it by hand in the "
-            "app (vault switcher), or first open any in-app (non-iCloud/external) vault and rerun "
-            "with --open."
+            f"is {classify_storage(current_selected)}-backed ({current_selected!r}), not in the "
+            f"app's Documents container, so the provisioned vault at .../Documents/{vault_name} "
+            "is not a sibling of it and --open would reload into an empty vault. The scratch "
+            "vault was still provisioned - open it by hand in the app (vault switcher), or first "
+            "open any in-app (non-iCloud/external) vault and rerun with --open."
         )
     return f"{parent}/{vault_name}"
 

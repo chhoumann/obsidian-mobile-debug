@@ -74,16 +74,24 @@ def looks_like_test_vault(name: str | None, expected: str | None = None) -> bool
     return any(token in lowered for token in SAFE_VAULT_TOKENS)
 
 
-def guard_real_vault(vault_name: str, args: argparse.Namespace, operation: str) -> None:
+def guard_real_vault(
+    vault_name: str, args: argparse.Namespace, operation: str,
+    identity: dict[str, Any] | None = None,
+) -> None:
     if getattr(args, "confirm_real_vault", False):
         return
     if looks_like_test_vault(vault_name, getattr(args, "test_vault", None)):
         return
+    identity_line = ""
+    if identity is not None:
+        from .provision import describe_vault_identity
+
+        identity_line = f"\nVault identity: {describe_vault_identity(identity)}"
     raise SystemExit(
         f"Refusing to {operation} against vault {vault_name!r}: it does not look like a test "
         f"vault (name contains none of {SAFE_VAULT_TOKENS}) and this touches a real Obsidian "
-        f"vault.\nRe-run with --confirm-real-vault to proceed, or --test-vault {vault_name!r} to "
-        f"whitelist this name."
+        f"vault.{identity_line}\nRe-run with --confirm-real-vault to proceed, or --test-vault "
+        f"{vault_name!r} to whitelist this name."
     )
 
 
@@ -258,6 +266,21 @@ async def ev(session: Any, expr: str, timeout: float = 30.0) -> Any:
 
 
 # ---------- runtime state / plugin lifecycle ----------
+async def read_vault_identity(session: Any) -> dict[str, Any]:
+    """Identity of the vault Obsidian has open: display name + backing storage.
+
+    The name alone is ambiguous (two vaults can share it); the recorded
+    localStorage path pins down which storage backs the open vault.
+    """
+    from . import provision as prov
+
+    raw = await ev(session, f"""(() => ({{
+        name: app.vault?.getName?.() ?? null,
+        path: {prov.CURRENT_SELECTED_VAULT_JS},
+    }}))()""") or {}
+    return prov.vault_identity(raw.get("name"), raw.get("path"))
+
+
 async def read_runtime_state(session: Any, plugin: str | None) -> dict[str, Any]:
     plugin_expr = "null" if not plugin else f"""(() => {{
         const id = {js(plugin)};
@@ -458,9 +481,12 @@ async def cmd_command(lockdown: Any, args: argparse.Namespace) -> int:
 
 
 async def cmd_diagnose(lockdown: Any, args: argparse.Namespace) -> int:
+    from . import provision as prov
+
     report: dict[str, Any] = {}
     async with inspector_session(lockdown, args.bundle) as (target, session):
         report["inspectorTarget"] = str(target)
+        report["vaultIdentity"] = await read_vault_identity(session)
         report["runtime"] = await read_runtime_state(session, args.plugin)
 
     if args.plugin:
@@ -471,6 +497,13 @@ async def cmd_diagnose(lockdown: Any, args: argparse.Namespace) -> int:
             report["afc"] = {
                 "vaultPath": vault_path,
                 "vaults": vaults,
+                # Whether this AFC candidate is the vault Obsidian actually has
+                # open: same-name vaults on different storage make the name
+                # alone misleading.
+                "correspondsToRuntimeVault": prov.afc_vault_corresponds(
+                    report["vaultIdentity"].get("selectedVaultPath"),
+                    vault_path.rsplit("/", 1)[-1],
+                ),
                 "pluginDir": pdir,
                 "pluginDirExists": await afc.exists(pdir),
                 "pluginFiles": await afc.listdir(pdir) if await afc.exists(pdir) else [],
@@ -483,36 +516,44 @@ async def cmd_diagnose(lockdown: Any, args: argparse.Namespace) -> int:
 
 async def cmd_reload(lockdown: Any, args: argparse.Namespace) -> int:
     async with inspector_session(lockdown, args.bundle) as (_target, session):
-        vault_name = await ev(session, "app.vault?.getName?.() ?? null")
-        guard_real_vault(vault_name or "", args, "reload")
+        identity = await read_vault_identity(session)
+        guard_real_vault(identity.get("vaultName") or "", args, "reload", identity)
         result = await enable_plugin(session, args.plugin)
+    result["vaultIdentity"] = identity
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0
 
 
 async def cmd_deploy(lockdown: Any, args: argparse.Namespace) -> int:
+    from . import provision as prov
+
     files = resolve_plugin_files(args)
 
     async with inspector_session(lockdown, args.bundle) as (_target, session):
+        identity = await read_vault_identity(session)
         state_before = await read_runtime_state(session, args.plugin)
 
         afc = await afc_open(lockdown, args.bundle)
         try:
             vault_path, _vaults = await afc_find_vault(afc, args.vault)
             vault_name = vault_path.rsplit("/", 1)[-1]
-            guard_real_vault(vault_name, args, "deploy")
+            guard_real_vault(vault_name, args, "deploy", identity)
 
-            open_vault = state_before.get("vaultName")
-            if open_vault != vault_name:
+            # Name equality alone is not identity: a same-name iCloud/external
+            # vault would pass it while AFC writes to the app-container twin
+            # Obsidian is not running. Require the open vault to be the
+            # app-container vault this AFC path actually backs.
+            if not prov.afc_vault_corresponds(identity.get("selectedVaultPath"), vault_name):
                 raise SystemExit(
-                    "Refusing to deploy: the AFC target vault and the vault open in Obsidian differ.\n"
-                    f"AFC target vault: {vault_name!r}\nOpen Obsidian vault: {open_vault!r}\n"
-                    "Open the target vault on the phone, then rerun deploy."
+                    "Refusing to deploy: the AFC target vault is not the vault open in Obsidian.\n"
+                    f"AFC target vault: {vault_name!r} (app-container, {vault_path})\n"
+                    f"Open Obsidian vault: {prov.describe_vault_identity(identity)}\n"
+                    "Open the app-container target vault on the phone, then rerun deploy."
                 )
 
             pdir = plugin_dir_for(vault_path, args.plugin)
             dev_id = device_id(lockdown)
-            report: dict[str, Any] = {"deployTarget": pdir}
+            report: dict[str, Any] = {"deployTarget": pdir, "vaultIdentity": identity}
 
             if not args.no_backup:
                 report["backup"] = str(
@@ -669,6 +710,11 @@ async def cmd_provision(lockdown: Any, args: argparse.Namespace) -> int:
         "vaultPath": vault_path,
         "vaultName": vault_name,
         "vaultNameSource": vault_name_source,
+        # AFC house_arrest can only write inside the app's own sandbox, so a
+        # provisioned vault is app-container-backed by construction. A
+        # same-name vault Obsidian may have open could still be iCloud or
+        # external - `diagnose` reports which one is actually selected.
+        "storageKind": "app-container",
         "wrote": [entry.relpath for entry in to_write],
         "skipped": sorted(existing - {entry.relpath for entry in to_write}),
         "plugin": plugin_report,
