@@ -160,6 +160,115 @@ def test_open_hint_reflects_open_and_plugin():
     assert "omd android reload --plugin metaedit" in with_plugin
 
 
+# ---------- issue #5: storage-backed vault identity ----------
+APP_PATH = "/var/mobile/Containers/Data/Application/ABC-123/Documents/omd-scratch"
+ICLOUD_PATH = "/var/mobile/Library/Mobile Documents/iCloud~md~obsidian/Documents/omd-scratch"
+EXTERNAL_PATH = "/private/var/mobile/Containers/Shared/AppGroup/XYZ/File Provider Storage/omd-scratch"
+
+
+def test_classify_storage_app_container():
+    assert prov.classify_storage(APP_PATH) == "app-container"
+
+
+def test_classify_storage_icloud():
+    assert prov.classify_storage(ICLOUD_PATH) == "icloud"
+    assert prov.classify_storage("/x/com~apple~CloudDocs/omd-scratch") == "icloud"
+
+
+def test_classify_storage_external():
+    assert prov.classify_storage(EXTERNAL_PATH) == "external"
+
+
+def test_classify_storage_unknown_when_no_selection():
+    assert prov.classify_storage(None) == "unknown"
+    assert prov.classify_storage("") == "unknown"
+
+
+def test_vault_identity_shape():
+    identity = prov.vault_identity("omd-scratch", ICLOUD_PATH)
+    assert identity == {
+        "vaultName": "omd-scratch",
+        "selectedVaultPath": ICLOUD_PATH,
+        "storageKind": "icloud",
+    }
+
+
+def test_describe_vault_identity_mentions_name_kind_and_path():
+    text = prov.describe_vault_identity(prov.vault_identity("omd-scratch", ICLOUD_PATH))
+    assert "'omd-scratch'" in text
+    assert "icloud" in text
+    assert ICLOUD_PATH in text
+
+
+def test_describe_vault_identity_without_path():
+    text = prov.describe_vault_identity(prov.vault_identity("notes", None))
+    assert "unknown" in text
+    assert "no recorded path" in text
+
+
+def test_afc_vault_corresponds_same_name_different_storage_is_false():
+    """The issue #5 scenario: two vaults both named omd-scratch."""
+    assert prov.afc_vault_corresponds(APP_PATH, "omd-scratch") is True
+    assert prov.afc_vault_corresponds(ICLOUD_PATH, "omd-scratch") is False
+    assert prov.afc_vault_corresponds(EXTERNAL_PATH, "omd-scratch") is False
+
+
+def test_afc_vault_corresponds_name_mismatch_is_false():
+    assert prov.afc_vault_corresponds(APP_PATH, "other-vault") is False
+
+
+def test_afc_vault_corresponds_no_selection_is_false():
+    assert prov.afc_vault_corresponds(None, "omd-scratch") is False
+
+
+def test_derive_sibling_error_names_storage_kind():
+    import pytest as _pytest
+    with _pytest.raises(SystemExit) as excinfo:
+        prov.derive_sibling_vault_path(ICLOUD_PATH, "omd-scratch")
+    assert "icloud-backed" in str(excinfo.value)
+
+
+RELATIVE_APP_PATH = "documents/notes"
+
+
+def test_classify_storage_relative_documents_is_app_container():
+    assert prov.classify_storage(RELATIVE_APP_PATH) == "app-container"
+    assert prov.classify_storage("Documents/notes") == "app-container"
+
+
+def test_classify_storage_other_relative_paths_stay_external():
+    assert prov.classify_storage("somewhere/notes") == "external"
+    assert prov.classify_storage("documents") == "external"
+
+
+def test_afc_vault_corresponds_relative_form():
+    assert prov.afc_vault_corresponds(RELATIVE_APP_PATH, "notes") is True
+    assert prov.afc_vault_corresponds(RELATIVE_APP_PATH, "other") is False
+
+
+def test_derive_sibling_vault_path_relative_form_preserves_prefix():
+    assert prov.derive_sibling_vault_path("documents/notes", "omd-scratch") == "documents/omd-scratch"
+    assert prov.derive_sibling_vault_path("Documents/notes", "omd-scratch") == "Documents/omd-scratch"
+
+
+def test_derive_sibling_vault_path_absolute_form_unchanged():
+    got = prov.derive_sibling_vault_path(
+        "/var/mobile/Containers/Data/Application/ABC/Documents/notes", "omd-scratch"
+    )
+    assert got == "/var/mobile/Containers/Data/Application/ABC/Documents/omd-scratch"
+
+
+def test_afc_vault_corresponds_requires_documents_parent():
+    """App-container storage alone is not enough: .../Library/Vaults/<name> must fail."""
+    library_path = "/var/mobile/Containers/Data/Application/ABC-123/Library/Vaults/omd-scratch"
+    assert prov.classify_storage(library_path) == "app-container"
+    assert prov.afc_vault_corresponds(library_path, "omd-scratch") is False
+
+
+def test_afc_vault_corresponds_trailing_slash_tolerated():
+    assert prov.afc_vault_corresponds(APP_PATH + "/", "omd-scratch") is True
+
+
 # ---------- issue #4: plugin-namespaced default scratch-vault names ----------
 def test_resolve_vault_name_explicit_wins():
     assert prov.resolve_vault_name("my-scratch", "quickadd") == ("my-scratch", "explicit")
