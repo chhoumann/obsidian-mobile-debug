@@ -301,15 +301,22 @@ def describe_vault_identity(identity: dict[str, object]) -> str:
 def afc_vault_corresponds(selected_path: str | None, afc_vault_name: str) -> bool:
     """Whether the AFC vault at /Documents/<name> is the vault Obsidian has open.
 
-    True only when the open vault lives in the app container (the storage AFC
-    writes to) AND its path basename matches the AFC folder name. A same-name
-    iCloud/external vault fails this even though the display names collide.
+    True only when the open vault's recorded path resolves to exactly the
+    container's ``Documents/<name>`` - the one directory AFC house_arrest
+    writes to. Requiring the ``Documents`` parent (not just any app-container
+    path with a matching basename, e.g. ``.../Library/Vaults/<name>``) is what
+    makes this identity, not a heuristic: a same-name iCloud/external vault, or
+    an app-container vault outside Documents, fails it.
     """
-    return (
-        classify_storage(selected_path) == "app-container"
-        and selected_path is not None
-        and selected_path.rstrip("/").rsplit("/", 1)[-1] == afc_vault_name
-    )
+    if not selected_path:
+        return False
+    trimmed = selected_path.rstrip("/")
+    parent, _, name = trimmed.rpartition("/")
+    if name != afc_vault_name:
+        return False
+    if _relative_documents_parent(trimmed) is not None:
+        return True
+    return APP_CONTAINER_MARKER in trimmed and parent.endswith("/Documents")
 
 
 def derive_sibling_vault_path(current_selected: str | None, vault_name: str) -> str:
