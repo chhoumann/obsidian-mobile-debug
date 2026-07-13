@@ -1,6 +1,6 @@
 [project]
 name = "obsidian-mobile-debug"
-version = "0.1.0"
+version = "0.2.0"
 description = "Debug Obsidian (and other WebView apps) on a USB-connected iPhone or Android device."
 readme = "README.md"
 requires-python = ">=3.11"

@@ -11,4 +11,4 @@ Transports (pymobiledevice3, adb, websockets) are imported lazily so ``--help``
 and argument parsing work without a device connected.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
