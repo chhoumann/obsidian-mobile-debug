@@ -669,20 +669,65 @@ async def cmd_provision(lockdown: Any, args: argparse.Namespace) -> int:
     return 0
 
 
+ERROR_HOOK_JS = """((w) => {
+    if (w.__omdHooked) return "already";
+    w.__omdHooked = true;
+    w.addEventListener("error", (e) => console.error("[onerror]", e.message,
+        (e.filename || "") + ":" + (e.lineno || ""), e.error && e.error.stack || ""));
+    w.addEventListener("unhandledrejection", (e) => console.error("[unhandledrejection]",
+        e.reason && (e.reason.stack || e.reason) || e.reason));
+    return "hooked";
+})(window)"""
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+
+def install_console_capture(session: Any, emit: Any) -> None:
+    """Route Console.messageAdded events to ``emit(message_dict)``.
+
+    Replaces pymobiledevice3's default console handlers on this session: they
+    log only ``message.text`` (the first console argument) and drop the
+    ``parameters`` array holding the rest. Install before ``console_enable()``
+    so the replay of buffered messages already goes through ``emit``. A repeat
+    notification re-emits the previous message with its updated count.
+    """
+    last_message: dict[str, Any] | None = None
+
+    def on_added(response: dict[str, Any]) -> None:
+        nonlocal last_message
+        last_message = response["params"]["message"]
+        emit(last_message)
+
+    def on_repeat(response: dict[str, Any]) -> None:
+        if last_message is None:
+            return
+        repeated = dict(last_message)
+        count = response.get("params", {}).get("count")
+        if count:
+            repeated["repeatCount"] = count
+        emit(repeated)
+
+    session.response_methods["Console.messageAdded"] = on_added
+    session.response_methods["Console.messageRepeatCountUpdated"] = on_repeat
+
+
 async def cmd_logs(lockdown: Any, args: argparse.Namespace) -> int:
+    from .console_fmt import format_console_event, format_console_line
+
     async with inspector_session(lockdown, args.bundle) as (_target, session):
-        await ev(session, """((w) => {
-            if (w.__omdHooked) return "already";
-            w.__omdHooked = true;
-            w.addEventListener("error", (e) => console.error("[onerror]", e.message,
-                (e.filename || "") + ":" + (e.lineno || ""), e.error && e.error.stack || ""));
-            w.addEventListener("unhandledrejection", (e) => console.error("[unhandledrejection]",
-                e.reason && (e.reason.stack || e.reason) || e.reason));
-            return "hooked";
-        })(window)""")
+        await ev(session, ERROR_HOOK_JS)
+
+        def emit(message: dict[str, Any]) -> None:
+            event = format_console_event(message, utc_now_iso())
+            print(json.dumps(event, ensure_ascii=False) if args.json
+                  else format_console_line(event), flush=True)
+
+        install_console_capture(session, emit)
+        if not args.json:
+            print(f"-- streaming console + uncaught errors for {args.seconds}s --")
         await session.console_enable()
-        logging.getLogger("webinspector.console").setLevel(logging.DEBUG)
-        print(f"-- streaming console + uncaught errors for {args.seconds}s --")
         await asyncio.sleep(args.seconds)
     return 0
 
