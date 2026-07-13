@@ -609,7 +609,9 @@ async def existing_vault_files_afc(afc: Any, vault_path: str) -> set[str]:
 async def cmd_provision(lockdown: Any, args: argparse.Namespace) -> int:
     from . import provision as prov
 
-    vault_name = args.vault
+    vault_name, vault_name_source = prov.resolve_vault_name(
+        args.vault, getattr(args, "plugin", None)
+    )
     vault_path = f"{prov.IOS_DOCUMENTS_ROOT}/{vault_name}"
 
     afc = await afc_open(lockdown, args.bundle)
@@ -622,7 +624,8 @@ async def cmd_provision(lockdown: Any, args: argparse.Namespace) -> int:
                 if undeleted:
                     raise SystemExit(f"Could not fully remove {vault_path}: {undeleted}")
             print(json.dumps({"action": "remove", "vaultPath": vault_path,
-                              "vaultName": vault_name, "removed": existed}, indent=2))
+                              "vaultName": vault_name, "vaultNameSource": vault_name_source,
+                              "removed": existed}, indent=2))
             return 0
 
         prov.guard_provision_vault(
@@ -665,6 +668,7 @@ async def cmd_provision(lockdown: Any, args: argparse.Namespace) -> int:
         "action": "provision",
         "vaultPath": vault_path,
         "vaultName": vault_name,
+        "vaultNameSource": vault_name_source,
         "wrote": [entry.relpath for entry in to_write],
         "skipped": sorted(existing - {entry.relpath for entry in to_write}),
         "plugin": plugin_report,
