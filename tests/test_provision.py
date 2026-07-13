@@ -256,3 +256,14 @@ def test_derive_sibling_vault_path_absolute_form_unchanged():
         "/var/mobile/Containers/Data/Application/ABC/Documents/notes", "omd-scratch"
     )
     assert got == "/var/mobile/Containers/Data/Application/ABC/Documents/omd-scratch"
+
+
+def test_afc_vault_corresponds_requires_documents_parent():
+    """App-container storage alone is not enough: .../Library/Vaults/<name> must fail."""
+    library_path = "/var/mobile/Containers/Data/Application/ABC-123/Library/Vaults/omd-scratch"
+    assert prov.classify_storage(library_path) == "app-container"
+    assert prov.afc_vault_corresponds(library_path, "omd-scratch") is False
+
+
+def test_afc_vault_corresponds_trailing_slash_tolerated():
+    assert prov.afc_vault_corresponds(APP_PATH + "/", "omd-scratch") is True
