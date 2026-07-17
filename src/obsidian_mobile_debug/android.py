@@ -42,7 +42,15 @@ def js(value: str) -> str:
 
 
 def adb_bin() -> str:
-    return os.environ.get("ADB", "adb")
+    if configured := os.environ.get("ADB"):
+        return configured
+    if sdk_root := os.environ.get("ANDROID_SDK_ROOT"):
+        candidate = Path(sdk_root).expanduser() / "platform-tools" / "adb"
+        if candidate.is_file():
+            return str(candidate)
+    cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    candidate = cache / "obsidian-mobile-debug" / "android-sdk" / "platform-tools" / "adb"
+    return str(candidate) if candidate.is_file() else "adb"
 
 
 def forward_command(port: int, socket: str) -> list[str]:
@@ -147,7 +155,10 @@ def cdp_targets(port: int) -> list[dict[str, Any]]:
     import urllib.request
 
     try:
-        return json.load(urllib.request.urlopen(f"http://localhost:{port}/json", timeout=10))
+        # CDP uses an integer-selected port on loopback only.
+        return json.load(urllib.request.urlopen(  # nosec B310
+            f"http://localhost:{port}/json", timeout=10
+        ))
     except Exception as exc:  # noqa: BLE001
         raise SystemExit(
             f"Could not read the CDP target list on localhost:{port}: {exc}\n"
@@ -582,4 +593,11 @@ _COMMANDS = {
 
 
 def dispatch(args: argparse.Namespace) -> int:
+    if args.cmd == "setup":
+        from .android_setup import setup_from_args
+
+        # Setup owns blocking subprocesses and its own short CDP event loops.
+        # Running it directly also lets KeyboardInterrupt reach its emulator
+        # cleanup path instead of marooning work in an executor thread.
+        return setup_from_args(args)
     return asyncio.run(_COMMANDS[args.cmd](args))
