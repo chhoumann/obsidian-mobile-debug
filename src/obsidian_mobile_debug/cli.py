@@ -11,6 +11,7 @@ imported only when a command actually dispatches.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from . import __version__
@@ -95,7 +96,9 @@ def _add_verify_args(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="omd",
-        description="Debug Obsidian (and other WebView apps) on a USB-connected iPhone or Android device.",
+        description=(
+            "Debug Obsidian WebViews on iPhone, Android devices, emulators, and test containers."
+        ),
     )
     from .provision import ANDROID_DEFAULT_ROOT
 
@@ -153,6 +156,63 @@ def build_parser() -> argparse.ArgumentParser:
     android_common.add_argument("--port", type=int, default=DEFAULT_CDP_PORT,
                                 help=f"local TCP port for the CDP forward (default: {DEFAULT_CDP_PORT})")
     android_sub = android.add_subparsers(dest="cmd", required=True)
+
+    p = android_sub.add_parser(
+        "setup", parents=[common],
+        help="install and boot a verified Android emulator + Obsidian runtime",
+    )
+    p.add_argument("--api", type=int, default=int(os.environ.get("API", "34")),
+                   help="Android API level (default: 34)")
+    p.add_argument(
+        "--backend", choices=("emulator", "container"), default="emulator",
+        help="Android runtime backend (default: emulator; container supports Linux VPS hosts)",
+    )
+    p.add_argument(
+        "--abi", choices=("auto", "x86_64", "arm64-v8a"), default=os.environ.get("ABI", "auto"),
+        help="Android system-image ABI (default: host-native; arm64-v8a avoids x86 TCG issues)",
+    )
+    p.add_argument("--avd", default=os.environ.get("AVD", "obsidian-debug"),
+                   help="isolated AVD name (default: obsidian-debug)")
+    p.add_argument("--device", default=os.environ.get("DEVICE", "pixel_6"),
+                   help="avdmanager hardware profile (default: pixel_6)")
+    p.add_argument(
+        "--gpu", choices=("auto", "software", "swiftshader", "lavapipe", "host"), default="auto",
+        help="emulator graphics backend (default: software without acceleration, auto otherwise)",
+    )
+    p.add_argument("--sdk-root", default=os.environ.get("ANDROID_SDK_ROOT"),
+                   help="Android SDK root (default: isolated OMD cache)")
+    p.add_argument("--android-home", default=os.environ.get("ANDROID_USER_HOME"),
+                   help="isolated Android user/AVD state directory")
+    p.add_argument("--state-dir", default=os.environ.get("OMD_ANDROID_STATE_DIR"),
+                   help="downloads, SDK, logs, and runtime state directory")
+    p.add_argument("--apk", default=os.environ.get("OBSIDIAN_APK"),
+                   help="local Obsidian APK (signature is still verified)")
+    p.add_argument("--acceleration", choices=("auto", "on", "off"), default="auto",
+                   help="hardware acceleration policy (default: auto; off supports no-KVM hosts)")
+    p.add_argument("--adb-timeout", type=float, default=1200,
+                   help="seconds to wait for the initial ADB connection (default: 1200)")
+    p.add_argument("--boot-timeout", type=float, default=2400,
+                   help="seconds to wait for a stable Android boot (default: 2400)")
+    p.add_argument("--console-port", type=int, default=5554,
+                   help="emulator console port, an even number from 5554-5682 (default: 5554)")
+    p.add_argument("--adb-port", type=int, default=5555,
+                   help="loopback ADB port for the container backend (default: 5555)")
+    p.add_argument("--reset", action="store_true",
+                   help="replace and wipe the named AVD or OMD container data before booting")
+    p.add_argument("--timeout-multiplier", type=int, default=50,
+                   help="Android service timeout multiplier for software emulation (default: 50)")
+    p.add_argument(
+        "--signer-sha256",
+        default=os.environ.get(
+            "OBSIDIAN_SIGNER_SHA256",
+            "bd3bd52f4427b5ab7f8059d071a35e3de943c646546d32313da5f1cac254b7e4",
+        ),
+        help="required Obsidian APK signer certificate SHA-256",
+    )
+    p.add_argument(
+        "--acknowledge-privileged-container", action="store_true",
+        help="acknowledge that ReDroid is a privileged, test-only container without SELinux",
+    )
 
     android_sub.add_parser("pages", parents=[common, android_common], help="list CDP targets")
 

@@ -30,7 +30,18 @@ def test_adb_bin_env_override(monkeypatch):
 
 def test_adb_bin_default(monkeypatch):
     monkeypatch.delenv("ADB", raising=False)
+    monkeypatch.delenv("ANDROID_SDK_ROOT", raising=False)
+    monkeypatch.setattr(android.Path, "is_file", lambda _self: False)
     assert android.adb_bin() == "adb"
+
+
+def test_adb_bin_uses_sdk_root(monkeypatch, tmp_path):
+    adb = tmp_path / "platform-tools/adb"
+    adb.parent.mkdir()
+    adb.touch()
+    monkeypatch.delenv("ADB", raising=False)
+    monkeypatch.setenv("ANDROID_SDK_ROOT", str(tmp_path))
+    assert android.adb_bin() == str(adb)
 
 
 def test_normalize_android_path_ok():
@@ -157,6 +168,15 @@ def _run_provision(monkeypatch, args, fake):
     monkeypatch.setattr(android, "adb_out", fake.adb_out)
     monkeypatch.setattr(android, "run_adb", fake.run_adb)
     return asyncio.run(android.cmd_provision(args))
+
+
+def test_dispatch_runs_setup_outside_asyncio(monkeypatch):
+    from obsidian_mobile_debug import android_setup
+
+    args = argparse.Namespace(cmd="setup")
+    monkeypatch.setattr(android_setup, "setup_from_args", lambda received: 7)
+
+    assert android.dispatch(args) == 7
 
 
 def test_cmd_provision_first_run_writes_full_skeleton(monkeypatch, capsys):

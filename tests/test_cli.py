@@ -47,6 +47,36 @@ def test_android_defaults_and_port():
     assert args.bundle == DEFAULT_BUNDLE
 
 
+def test_android_setup_defaults():
+    args = parse("android", "setup")
+    assert args.backend == "emulator"
+    assert args.api == 34
+    assert args.abi == "auto"
+    assert args.avd == "obsidian-debug"
+    assert args.device == "pixel_6"
+    assert args.gpu == "auto"
+    assert args.acceleration == "auto"
+    assert args.adb_timeout == 1200
+    assert args.boot_timeout == 2400
+    assert args.console_port == 5554
+    assert args.adb_port == 5555
+    assert args.timeout_multiplier == 50
+    assert args.reset is False
+    assert args.acknowledge_privileged_container is False
+
+
+def test_android_setup_accepts_software_emulator_options():
+    args = parse(
+        "android", "setup", "--acceleration", "off", "--avd", "vps-debug",
+        "--abi", "arm64-v8a", "--console-port", "5556", "--reset",
+    )
+    assert args.acceleration == "off"
+    assert args.avd == "vps-debug"
+    assert args.abi == "arm64-v8a"
+    assert args.console_port == 5556
+    assert args.reset is True
+
+
 def test_android_deploy_requires_vault_path():
     with pytest.raises(SystemExit):
         parse("android", "deploy", "--plugin", "dataview", "--repo", "/tmp/dv")

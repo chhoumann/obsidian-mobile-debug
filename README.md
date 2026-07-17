@@ -1,9 +1,9 @@
 # obsidian-mobile-debug
 
-An installable CLI (`omd`) plus hard-won notes for **debugging Obsidian (and
-other WebView apps) on a physical phone over USB** - driving the page's JS,
+An installable CLI (`omd`) plus hard-won notes for **debugging Obsidian WebViews
+on a physical phone or isolated Android emulator** - driving the page's JS,
 deploying a locally-built plugin, reproducing user-reported bugs, and capturing
-crashes - all from the Mac terminal. Both platforms, one command surface:
+crashes. Both platforms, one command surface:
 
 - **`omd ios ...`** - iPhone WKWebView via [`pymobiledevice3`](https://github.com/doronz88/pymobiledevice3)
   (WebKit Web Inspector + AFC/house_arrest).
@@ -64,12 +64,90 @@ uv run --with obsidian-mobile-debug omd ios pages
 
 ### Android prerequisites
 
-- `adb` on your PATH (or set `ADB=/path/to/adb`). Obsidian running on a device or
-  emulator, with the vault you intend to touch open.
-- To stand up an emulator + Obsidian + CDP from scratch, `./android_setup.sh`
-  does the whole thing (SDK, headless emulator, APK install, forward); re-runnable
-  and reversible with `REMOVE_SDK=1 ./android_teardown.sh`. The CLI drives an
-  already-running WebView; those scripts provision one.
+- To use an existing device or emulator, put `adb` on `PATH` or set
+  `ADB=/path/to/adb`, then launch Obsidian with the vault you intend to touch.
+- To provision everything from scratch, run `omd android setup`. It installs an
+  isolated Android SDK and AVD under the OMD cache, boots a headless emulator,
+  verifies and installs Obsidian, and waits for its CDP socket. The legacy
+  `./android_setup.sh` entry point is a wrapper around the same command.
+- Java is the only extra host prerequisite for the official emulator backend.
+  Hardware acceleration is detected automatically. A no-KVM Linux x86_64 VPS
+  can instead use the digest-pinned ReDroid backend described below.
+
+```bash
+# Official Google emulator, with hardware acceleration when available.
+omd android setup
+
+# Pure TCG diagnostic path. Its first boot can take 15-30 minutes.
+omd android setup --acceleration off
+
+# Native x86_64 Android container for an isolated no-KVM Linux test host.
+omd android setup --backend container --acknowledge-privileged-container
+export ANDROID_SERIAL=127.0.0.1:5555
+```
+
+The container backend requires Docker and BinderFS. On Ubuntu, install the
+matching `linux-modules-extra-$(uname -r)` and `docker.io` packages, load
+`binder_linux`, and mount BinderFS at `/dev/binderfs` before running setup.
+OMD never installs host packages, prompts for privilege, or exposes ADB beyond
+loopback. It prefers direct Docker access and otherwise accepts non-interactive
+`sudo -n docker`.
+
+```bash
+sudo apt-get install docker.io "linux-modules-extra-$(uname -r)"
+sudo modprobe binder_linux devices=binder,hwbinder,vndbinder
+sudo mkdir -p /dev/binderfs
+mountpoint -q /dev/binderfs || sudo mount -t binder binder /dev/binderfs
+```
+
+ReDroid is deliberately opt-in. Its official Android 14 amd64 image is pinned
+to an immutable SHA-256 digest, but Android runs in a privileged test container
+and guest SELinux is unavailable on an AppArmor host. The acknowledgement flag
+exists so this weaker host boundary cannot be selected accidentally. Use it
+only on an isolated test machine. OMD reports the limitation, checks that ADB is
+exactly `127.0.0.1:<port>`, verifies the Android package UID against the live
+process UID, and requires multiprocess WebView isolation.
+
+Automatic setup downloads the pinned official Android command-line tools and
+checks their published archive checksum. It obtains the latest Obsidian APK from
+the official GitHub release, verifies GitHub's SHA-256 asset digest, requires APK
+Signature Scheme v2, and pins Obsidian's signer certificate. A local
+`--apk /path/to/Obsidian.apk` must pass the same signer checks.
+
+The initial ADB transport gate allows 20 minutes by default so a clean no-KVM
+userdata image can finish initializing. The later stable-boot gate has its own
+40-minute deadline. Both remain configurable with `--adb-timeout` and
+`--boot-timeout`.
+
+Pure TCG emulation is unusually slow and Android's normal service watchdogs can
+kill `system_server` before boot completes. OMD starts the userdebug emulator in
+permissive mode only long enough to set `ro.hw_timeout_multiplier`, then restores
+SELinux enforcing mode without interrupting APEX activation. It preserves
+QEMU's broad CPU model because masking SSSE3 prevents current Android images
+from exposing ADB in a practical time. Modern Google WebView builds can still
+trap in PNG decoding under pure TCG, so the sustained renderer gate rejects
+those runtimes instead of claiming a false pass. OMD uses the emulator's
+supported `software` graphics mode instead of the
+deprecated `swiftshader_indirect` backend. Because Chromium's renderer hang
+monitor can mistake extreme TCG slowness for a dead renderer, OMD also writes
+`--disable-hang-monitor` to the official userdebug-only WebView command-line
+file. This does not disable SELinux, the WebView sandbox, or multiprocess
+isolation. OMD refuses to install or launch an APK until the
+package service, `system_server`, boot-completed property, timeout multiplier,
+and enforcing state remain healthy for 30 seconds with no watchdog kill.
+After launching Obsidian, it requires two successful CDP evaluations 30 seconds
+apart after a quiet 30-second renderer warm-up, the same app and system process
+IDs, and no renderer or app crash marker. On failure, isolated-emulator logcat is
+saved in the OMD state directory before the launched emulator is terminated.
+If setup fails after launching a new emulator, OMD terminates only that emulator
+by syncing the guest and requesting Android power-off first, then falling back
+to console shutdown and its scoped process group if needed. It keeps the log for
+diagnosis.
+
+`./android_teardown.sh` stops and deletes only OMD's isolated AVD. Set
+`BACKEND=container` to remove the named ReDroid container instead, while keeping
+its data for reuse. Set `REMOVE_SDK=1` to remove OMD-owned SDK/cache state too.
+It never deletes a shared SDK or `~/.android`.
 
 ## Quickstart
 
@@ -109,6 +187,7 @@ WebView app. Android commands take `--port` (default `9333`) for the CDP forward
 
 | Command | What it does |
 |---|---|
+| `setup [--backend emulator\|container]` | Install and boot a verified Android runtime and Obsidian; the container backend supports isolated no-KVM Linux hosts. |
 | `pages` | List CDP targets. |
 | `eval "<js>"` / `eval --probe <file\|name>` | Evaluate JS over CDP (awaitPromise by default; `--no-await` to disable). |
 | `diagnose [--plugin <id>]` | Report runtime state; with `--plugin`, add that plugin's state. |
