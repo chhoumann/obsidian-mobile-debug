@@ -82,7 +82,9 @@ def test_config_from_args_normalizes_signer(tmp_path):
     assert result.android_home == tmp_path / "state/android-user"
 
 
-def test_container_config_requires_explicit_security_acknowledgement(tmp_path):
+def test_container_config_requires_explicit_security_acknowledgement(monkeypatch, tmp_path):
+    monkeypatch.setattr(android_setup.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(android_setup.platform, "machine", lambda: "x86_64")
     args = argparse.Namespace(
         backend="container", api=34, abi="auto", avd="test", device="pixel_6",
         bundle="md.obsidian", gpu="auto", sdk_root=str(tmp_path / "sdk"),
@@ -96,7 +98,9 @@ def test_container_config_requires_explicit_security_acknowledgement(tmp_path):
         android_setup.config_from_args(args)
 
 
-def test_container_config_uses_loopback_serial(tmp_path):
+def test_container_config_uses_loopback_serial(monkeypatch, tmp_path):
+    monkeypatch.setattr(android_setup.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(android_setup.platform, "machine", lambda: "x86_64")
     args = argparse.Namespace(
         backend="container", api=34, abi="auto", avd="test", device="pixel_6",
         bundle="md.obsidian", gpu="auto", sdk_root=str(tmp_path / "sdk"),

@@ -260,7 +260,8 @@ async def cmd_verify(session, max_wait=360):
       return {file,size,notice:(n[n.length-1]||null)};})()"""
     last, stable, elapsed = -1, 0, 0
     while elapsed < max_wait:
-        await asyncio.sleep(3); elapsed += 3
+        await asyncio.sleep(3)
+        elapsed += 3
         try:
             info = await ev(session, probe)
         except Exception as e:  # noqa: BLE001
@@ -306,10 +307,13 @@ async def main():
     sub.add_parser("diagnose")
     sub.add_parser("deploy")
     sub.add_parser("reload")
-    pr = sub.add_parser("repro"); pr.add_argument("--count", type=int, default=1)
+    pr = sub.add_parser("repro")
+    pr.add_argument("--count", type=int, default=1)
     sub.add_parser("verify")
-    pe = sub.add_parser("eval"); pe.add_argument("expr")
-    pl = sub.add_parser("logs"); pl.add_argument("--seconds", type=int, default=60)
+    pe = sub.add_parser("eval")
+    pe.add_argument("expr")
+    pl = sub.add_parser("logs")
+    pl.add_argument("--seconds", type=int, default=60)
     args = ap.parse_args()
 
     lockdown = await create_using_usbmux()
