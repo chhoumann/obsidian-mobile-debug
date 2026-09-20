@@ -318,6 +318,10 @@ def ensure_commandline_tools(config: SetupConfig) -> Path:
                     f"Android command-line tools archive contains an unsafe path: {member.filename!r}"
                 )
         package.extractall(temporary)
+        for member in package.infolist():
+            mode = (member.external_attr >> 16) & 0o777
+            if mode:
+                (temporary / member.filename).chmod(mode)
     extracted = temporary / "cmdline-tools"
     if not (extracted / "bin" / "sdkmanager").is_file():
         raise SetupError("Downloaded Android command-line tools archive has an unexpected layout")
