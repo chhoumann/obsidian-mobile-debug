@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import subprocess
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -496,3 +498,22 @@ def test_software_bootstrap_restarts_services_if_system_server_already_exists(
     android_setup.bootstrap_software_emulator(config(tmp_path), Path("adb"))
 
     assert calls.index(("shell", "stop")) < calls.index(("shell", "start"))
+
+
+def test_sdk_archive_preserves_executable_tools(monkeypatch, tmp_path):
+    cfg = config(tmp_path)
+    downloads = cfg.state_dir / "downloads"
+    downloads.mkdir(parents=True)
+    archive = downloads / "tools.zip"
+    with zipfile.ZipFile(archive, "w") as package:
+        member = zipfile.ZipInfo("cmdline-tools/bin/sdkmanager")
+        member.external_attr = 0o100755 << 16
+        package.writestr(member, "#!/bin/sh\nprintf 'sdk-ready'\n")
+    digest = hashlib.sha1(archive.read_bytes()).hexdigest()
+    monkeypatch.setattr(
+        android_setup, "_commandline_tools_spec",
+        lambda: ("https://dl.google.com/android/repository/tools.zip", digest),
+    )
+    monkeypatch.setattr(android_setup.shutil, "which", lambda name: "/usr/bin/java")
+    sdkmanager = android_setup.ensure_commandline_tools(cfg)
+    assert subprocess.check_output([sdkmanager], text=True) == "sdk-ready"
