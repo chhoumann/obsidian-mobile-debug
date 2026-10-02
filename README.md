@@ -310,7 +310,11 @@ each `--probe` while capturing every console argument on the same session
 for `--logs-seconds`, then restores the original vault (skip with
 `--keep-vault`) and - with `--cleanup`, only after a verified restore -
 removes the scratch vault, deregistering it from the vault switcher and
-dropping its trust flag.
+dropping its trust flag. Right before deleting, cleanup re-reads the vault
+path Obsidian has selected and skips the delete (exit `2`) if it is still the
+scratch vault. `--cleanup` refuses to start when Obsidian is already in the
+scratch vault, since there would be no other vault to restore to: open another
+vault first, or use `--keep-vault`.
 
 Exit codes: `0` when every assertion passed, `2` when an assertion failed (a
 probe returned `ok:false` or threw, the plugin did not instantiate, artifact
