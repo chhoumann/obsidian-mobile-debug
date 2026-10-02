@@ -342,6 +342,19 @@ def afc_vault_corresponds(selected_path: str | None, afc_vault_name: str) -> boo
     return APP_CONTAINER_MARKER in trimmed and parent.endswith("/Documents")
 
 
+def ios_vault_may_be_open(identity: dict[str, object], afc_vault_name: str) -> bool:
+    """Whether the AFC vault /Documents/<name> may be the vault Obsidian has open.
+
+    With a recorded path this is ``afc_vault_corresponds``. Without one, a
+    runtime name match fails closed: nothing proves the open vault lives in
+    other storage.
+    """
+    path = identity.get("selectedVaultPath")
+    if not path:
+        return identity.get("vaultName") == afc_vault_name
+    return afc_vault_corresponds(str(path), afc_vault_name)
+
+
 def derive_sibling_vault_path(current_selected: str | None, vault_name: str) -> str:
     """Recorded path of a sibling vault next to the currently-open one.
 

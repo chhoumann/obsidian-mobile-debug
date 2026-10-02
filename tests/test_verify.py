@@ -220,6 +220,19 @@ def test_ios_cleanup_never_deletes_the_open_vault(monkeypatch):
     assert failures
 
 
+def test_ios_cleanup_refuses_name_match_without_recorded_path(monkeypatch):
+    phone = FakePhone(None, {IOS_SCRATCH_DIR}, loaded=SCRATCH)
+    fake_ios(monkeypatch, phone)
+    args = parse("ios", "verify", "--plugin", "quickadd", "--cleanup")
+    summary, failures = {"vault": {"name": SCRATCH}}, []
+    outcome(verify._ios_restore_and_cleanup(
+        object(), args, summary, failures, False, None, cleanup=True
+    ))
+    assert IOS_SCRATCH_DIR in phone.dirs
+    assert summary["cleanup"]["attempted"] is False
+    assert failures
+
+
 def test_android_verify_cleanup_restores_then_deletes_scratch(monkeypatch, capsys):
     notes = f"{ANDROID_ROOT}/notes"
     phone = FakePhone(notes, {notes})

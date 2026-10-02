@@ -147,3 +147,12 @@ def test_cmd_provision_remove_refuses_the_open_vault(monkeypatch):
     result = outcome(ios.cmd_provision(object(), args))
     assert IOS_SCRATCH_DIR in phone.dirs
     assert isinstance(result, SystemExit) and "Open another vault" in str(result)
+
+
+def test_cmd_provision_remove_refuses_name_match_without_recorded_path(monkeypatch):
+    phone = FakePhone(None, {IOS_SCRATCH_DIR}, loaded=SCRATCH)
+    fake_ios(monkeypatch, phone)
+    args = build_parser().parse_args(["ios", "provision", "--remove", "--vault", SCRATCH])
+    result = outcome(ios.cmd_provision(object(), args))
+    assert IOS_SCRATCH_DIR in phone.dirs
+    assert isinstance(result, SystemExit) and "Open another vault" in str(result)

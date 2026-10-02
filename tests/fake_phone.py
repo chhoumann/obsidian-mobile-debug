@@ -18,12 +18,16 @@ ANDROID_NAME_JS = "app?.vault?.getName?.() ?? null"
 
 
 class FakePhone:
-    def __init__(self, selected, dirs):
+    def __init__(self, selected, dirs, loaded=None):
         self.selected = selected
         self.dirs = set(dirs)
+        # A vault still loaded after its localStorage selection was cleared.
+        self.loaded = loaded
 
     @property
     def vault_name(self):
+        if self.loaded:
+            return self.loaded
         return self.selected.rstrip("/").rsplit("/", 1)[-1] if self.selected else None
 
     def ev(self, expr):

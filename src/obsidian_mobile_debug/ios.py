@@ -720,9 +720,9 @@ async def cmd_provision(lockdown: Any, args: argparse.Namespace) -> int:
     if args.remove:
         prov.guard_remove_vault(vault_name)
         async with inspector_session(lockdown, args.bundle) as (_target, session):
-            open_path = (await read_vault_identity(session)).get("selectedVaultPath")
-        if prov.afc_vault_corresponds(open_path, vault_name):
-            prov.refuse_remove_open_vault(vault_name, open_path)
+            identity = await read_vault_identity(session)
+        if prov.ios_vault_may_be_open(identity, vault_name):
+            prov.refuse_remove_open_vault(vault_name, identity.get("selectedVaultPath"))
 
     afc = await afc_open(lockdown, args.bundle)
     try:

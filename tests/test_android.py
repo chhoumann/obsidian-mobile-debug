@@ -240,6 +240,15 @@ def test_cmd_provision_remove_refuses_the_open_vault(monkeypatch):
     assert isinstance(result, SystemExit) and "Open another vault" in str(result)
 
 
+def test_cmd_provision_remove_refuses_name_match_without_recorded_path(monkeypatch):
+    phone = FakePhone(None, {ANDROID_SCRATCH_DIR}, loaded=SCRATCH)
+    fake_android(monkeypatch, phone)
+    args = build_parser().parse_args(["android", "provision", "--remove", "--vault", SCRATCH])
+    result = outcome(android.cmd_provision(args))
+    assert ANDROID_SCRATCH_DIR in phone.dirs
+    assert isinstance(result, SystemExit) and "Open another vault" in str(result)
+
+
 def test_cmd_provision_remove_refuses_real_vault(monkeypatch):
     fake = _FakeAdb(exists=True)
     args = argparse.Namespace(vault="my-notes", vault_root="/sdcard/Documents", remove=True)

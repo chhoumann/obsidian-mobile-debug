@@ -215,7 +215,7 @@ async def cmd_verify_ios(lockdown: Any, args: argparse.Namespace) -> int:
                     "runtime": await ios.read_runtime_state(session, args.plugin),
                 }
             original_path = original_identity.get("selectedVaultPath")
-            if args.cleanup and prov.afc_vault_corresponds(original_path, vault_name):
+            if args.cleanup and prov.ios_vault_may_be_open(original_identity, vault_name):
                 refuse_cleanup_from_scratch(vault_name, original_path)
             scratch_open_path = prov.derive_sibling_vault_path(original_path, vault_name)
 
@@ -321,9 +321,9 @@ async def _ios_restore_and_cleanup(
         # Restore only proves the vault name; check the path Obsidian actually
         # has selected right before deleting.
         async with ios.inspector_session_unlocked(lockdown, args.bundle) as (_target, session):
-            current_path = (await ios.read_vault_identity(session)).get("selectedVaultPath")
-        if prov.afc_vault_corresponds(current_path, vault_name):
-            skip_cleanup_scratch_open(summary, failures, current_path)
+            current = await ios.read_vault_identity(session)
+        if prov.ios_vault_may_be_open(current, vault_name):
+            skip_cleanup_scratch_open(summary, failures, current.get("selectedVaultPath"))
             return
         vault_path = f"{prov.IOS_DOCUMENTS_ROOT}/{vault_name}"
         afc = await ios.afc_open(lockdown, args.bundle)
