@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import posixpath
 import time
 from pathlib import Path
 from typing import Any
@@ -58,6 +59,26 @@ def summarize_assertions(summary: dict[str, Any], failures: list[str]) -> None:
 
 def emit_summary(summary: dict[str, Any]) -> None:
     print(json.dumps(summary, indent=2, ensure_ascii=False))
+
+
+def refuse_cleanup_from_scratch(vault_name: str, current_path: str | None) -> None:
+    raise SystemExit(
+        f"Refusing --cleanup: Obsidian is already in the scratch vault {vault_name!r} "
+        f"({current_path}), so restoring would return to it and cleanup would delete the "
+        "vault the run started in. Open another vault in Obsidian first, or rerun with "
+        "--keep-vault."
+    )
+
+
+def skip_cleanup_scratch_open(
+    summary: dict[str, Any], failures: list[str], current_path: str | None
+) -> None:
+    summary["cleanup"] = {
+        "attempted": False,
+        "reason": "Obsidian still has the scratch vault open",
+        "currentVaultPath": current_path,
+    }
+    failures.append("scratch vault cleanup skipped: Obsidian still has it open")
 
 
 # ---------- iOS ----------
@@ -194,9 +215,10 @@ async def cmd_verify_ios(lockdown: Any, args: argparse.Namespace) -> int:
                     "originalVault": original_identity,
                     "runtime": await ios.read_runtime_state(session, args.plugin),
                 }
-            scratch_open_path = prov.derive_sibling_vault_path(
-                original_identity.get("selectedVaultPath"), vault_name
-            )
+            original_path = original_identity.get("selectedVaultPath")
+            if args.cleanup and prov.afc_vault_corresponds(original_path, vault_name):
+                refuse_cleanup_from_scratch(vault_name, original_path)
+            scratch_open_path = prov.derive_sibling_vault_path(original_path, vault_name)
 
             # 2. provision (skeleton + hash-verified plugin artifacts).
             afc = await ios.afc_open(lockdown, args.bundle)
@@ -297,6 +319,13 @@ async def _ios_restore_and_cleanup(
             # Never delete a vault Obsidian may still have open.
             summary["cleanup"] = {"attempted": False, "reason": "restore did not complete"}
             return
+        # Restore only proves the vault name; check the path Obsidian actually
+        # has selected right before deleting.
+        async with ios.inspector_session_unlocked(lockdown, args.bundle) as (_target, session):
+            current_path = (await ios.read_vault_identity(session)).get("selectedVaultPath")
+        if prov.afc_vault_corresponds(current_path, vault_name):
+            skip_cleanup_scratch_open(summary, failures, current_path)
+            return
         vault_path = f"{prov.IOS_DOCUMENTS_ROOT}/{vault_name}"
         afc = await ios.afc_open(lockdown, args.bundle)
         try:
@@ -325,6 +354,17 @@ async def _async_value(value: Any) -> Any:
 
 
 # ---------- Android ----------
+def _android_is_scratch(
+    name: str | None, path: str | None, vault_name: str, vault_path: str
+) -> bool:
+    """Whether the open vault is the scratch vault.
+
+    The name match also catches the scratch dir recorded under another path
+    alias (e.g. /sdcard/... for /storage/emulated/0/...).
+    """
+    return name == vault_name or (bool(path) and posixpath.normpath(path) == vault_path)
+
+
 async def _android_wait_for_vault(port: int, expected_vault: str,
                                   timeout: float = VAULT_SWITCH_TIMEOUT) -> str | None:
     """Poll (reconnecting each time) until the expected vault reports open."""
@@ -384,6 +424,10 @@ async def cmd_verify_android(args: argparse.Namespace) -> int:
             summary["diagnose"]["originalVault"] = {
                 "vaultName": original_name, "selectedVaultPath": original_path,
             }
+            if args.cleanup and _android_is_scratch(
+                original_name, original_path, vault_name, vault_path
+            ):
+                refuse_cleanup_from_scratch(vault_name, original_path)
 
             # 2. provision skeleton + plugin over adb (verification best-effort).
             skeleton = prov.vault_skeleton(args.plugin, data_seed)
@@ -501,6 +545,13 @@ async def _android_restore_and_cleanup(
             summary["cleanup"] = {"attempted": False, "reason": "restore did not complete"}
             return
         vault_path = summary["vault"]["path"]
+        # Restore only proves the vault name; check the path Obsidian actually
+        # has selected right before deleting.
+        current_name = await android.ev(args.port, "app?.vault?.getName?.() ?? null", timeout=10)
+        current_path = await android.ev(args.port, prov.CURRENT_SELECTED_VAULT_JS, timeout=10)
+        if _android_is_scratch(current_name, current_path, vault_name, vault_path):
+            skip_cleanup_scratch_open(summary, failures, current_path)
+            return
         android.run_adb(["shell", "rm", "-rf", vault_path])
         summary["cleanup"] = {"attempted": True, "ok": True, "vaultPath": vault_path}
         # Deregister the removed vault (switcher entry + trust flag).

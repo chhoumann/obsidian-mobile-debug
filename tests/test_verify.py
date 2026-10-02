@@ -178,3 +178,209 @@ def test_capture_console_events_collects_until_window_closes(monkeypatch):
 
     events = asyncio.run(android.capture_console_events(9333, 0.3))
     assert [event["text"] for event in events] == ["tail"]
+
+
+# ---------- restore/cleanup safety against a fake phone ----------
+# The fake models the two facts cleanup safety depends on: which vault path
+# Obsidian has selected (localStorage) and which vault dirs exist on disk.
+# Everything else in the verify flow runs for real.
+import contextlib
+import json
+import re
+
+from obsidian_mobile_debug import provision as prov
+
+SCRATCH = "quickadd-omd-scratch"
+IOS_SCRATCH_DIR = f"/Documents/{SCRATCH}"
+ANDROID_ROOT = "/storage/emulated/0/Documents"
+ANDROID_SCRATCH_DIR = f"{ANDROID_ROOT}/{SCRATCH}"
+ANDROID_NAME_JS = "app?.vault?.getName?.() ?? null"
+
+
+class _FakePhone:
+    def __init__(self, selected, dirs):
+        self.selected = selected
+        self.dirs = set(dirs)
+
+    @property
+    def vault_name(self):
+        return self.selected.rstrip("/").rsplit("/", 1)[-1] if self.selected else None
+
+    def ev(self, expr):
+        if expr == prov.CURRENT_SELECTED_VAULT_JS:
+            return self.selected
+        if expr == ANDROID_NAME_JS:
+            return self.vault_name
+        if "location.reload" in expr:  # open_vault_js: select the path and reload
+            self.selected = json.loads(re.search(r'const p = ("[^"]*");', expr).group(1))
+            return {"opened": self.selected}
+        return {"ok": True}
+
+    def runtime(self):
+        return {"vaultName": self.vault_name, "plugin": {"enabled": True, "instantiated": True}}
+
+
+def _outcome(coro):
+    import asyncio
+
+    try:
+        return asyncio.run(coro)
+    except SystemExit as exc:
+        return exc
+
+
+def _fake_ios(monkeypatch, phone):
+    from obsidian_mobile_debug import ios, lock
+
+    class _Session:
+        async def console_enable(self):
+            pass
+
+    @contextlib.asynccontextmanager
+    async def session_cm(_lockdown, _bundle):
+        yield "target", _Session()
+
+    class _AFC:
+        async def exists(self, path):
+            return path in phone.dirs
+
+        async def rm(self, path, force=False):
+            phone.dirs.discard(path)
+            return []
+
+        async def close(self):
+            pass
+
+    async def afc_open(_lockdown, _bundle):
+        return _AFC()
+
+    async def provision_scratch_vault(_afc, name, *_rest):
+        phone.dirs.add(f"/Documents/{name}")
+        return {"plugin": {"pushed": {"main.js": {"ok": True}}}}
+
+    async def ev(_session, expr, timeout=30.0):
+        return phone.ev(expr)
+
+    async def read_vault_identity(_session):
+        return prov.vault_identity(phone.vault_name, phone.selected)
+
+    async def read_runtime_state(_session, _plugin):
+        return phone.runtime()
+
+    async def enable_plugin(_session, _plugin):
+        return {}
+
+    monkeypatch.setattr(lock, "inspector_lock", lambda *_a: contextlib.nullcontext())
+    monkeypatch.setattr(ios, "inspector_session_unlocked", session_cm)
+    monkeypatch.setattr(ios, "afc_open", afc_open)
+    monkeypatch.setattr(ios, "provision_scratch_vault", provision_scratch_vault)
+    monkeypatch.setattr(ios, "resolve_plugin_files", lambda _args: {})
+    monkeypatch.setattr(ios, "ev", ev)
+    monkeypatch.setattr(ios, "read_vault_identity", read_vault_identity)
+    monkeypatch.setattr(ios, "read_runtime_state", read_runtime_state)
+    monkeypatch.setattr(ios, "enable_plugin", enable_plugin)
+    monkeypatch.setattr(ios, "install_console_capture", lambda *_a: None)
+
+
+def _fake_android(monkeypatch, phone):
+    from obsidian_mobile_debug import android
+
+    @contextlib.contextmanager
+    def cdp_forward(_port, _package):
+        yield 4242
+
+    async def ev(_port, expr, *, timeout=120.0, await_promise=True):
+        return phone.ev(expr)
+
+    async def ev_with_console(_port, expr, *, timeout=120.0, events=None):
+        return phone.ev(expr), []
+
+    async def read_runtime_state(_port, _plugin):
+        return phone.runtime()
+
+    async def enable_plugin(_port, _plugin):
+        return {}
+
+    def run_adb(args, *, check=True):
+        if args[:3] == ["shell", "rm", "-rf"]:
+            phone.dirs.discard(args[3])
+
+    def write_device_file(path, _content):
+        phone.dirs.add(path.split("/.obsidian/")[0])
+
+    monkeypatch.setattr(android, "cdp_forward", cdp_forward)
+    monkeypatch.setattr(android, "ev", ev)
+    monkeypatch.setattr(android, "ev_with_console", ev_with_console)
+    monkeypatch.setattr(android, "read_runtime_state", read_runtime_state)
+    monkeypatch.setattr(android, "enable_plugin", enable_plugin)
+    monkeypatch.setattr(android, "resolve_plugin_files_for_provision", lambda _a: {"main.js": "m"})
+    monkeypatch.setattr(android, "existing_vault_files", lambda _path: set())
+    monkeypatch.setattr(android, "write_device_file", write_device_file)
+    monkeypatch.setattr(android, "push_plugin_files", lambda *_a: None)
+    monkeypatch.setattr(android, "run_adb", run_adb)
+
+
+def test_ios_verify_cleanup_restores_then_deletes_scratch(monkeypatch, capsys):
+    phone = _FakePhone("documents/notes", {"/Documents/notes"})
+    _fake_ios(monkeypatch, phone)
+    args = parse("ios", "verify", "--plugin", "quickadd", "--cleanup")
+    assert _outcome(verify.cmd_verify_ios(object(), args)) == 0
+    assert phone.selected == "documents/notes"
+    assert phone.dirs == {"/Documents/notes"}
+
+
+def test_ios_verify_cleanup_refuses_when_started_in_scratch(monkeypatch, capsys):
+    phone = _FakePhone(f"documents/{SCRATCH}", {"/Documents/notes", IOS_SCRATCH_DIR})
+    _fake_ios(monkeypatch, phone)
+    args = parse("ios", "verify", "--plugin", "quickadd", "--cleanup")
+    result = _outcome(verify.cmd_verify_ios(object(), args))
+    assert IOS_SCRATCH_DIR in phone.dirs
+    assert isinstance(result, SystemExit) and "--keep-vault" in str(result)
+
+
+def test_ios_cleanup_never_deletes_the_open_vault(monkeypatch):
+    # Cleanup without a completed vault switch (e.g. artifact verification
+    # failed) skips restore; the path check alone must stop the delete.
+    phone = _FakePhone(f"documents/{SCRATCH}", {IOS_SCRATCH_DIR})
+    _fake_ios(monkeypatch, phone)
+    args = parse("ios", "verify", "--plugin", "quickadd", "--cleanup")
+    summary, failures = {"vault": {"name": SCRATCH}}, []
+    _outcome(verify._ios_restore_and_cleanup(
+        object(), args, summary, failures, False, None, cleanup=True
+    ))
+    assert IOS_SCRATCH_DIR in phone.dirs
+    assert summary["cleanup"]["attempted"] is False
+    assert failures
+
+
+def test_android_verify_cleanup_restores_then_deletes_scratch(monkeypatch, capsys):
+    notes = f"{ANDROID_ROOT}/notes"
+    phone = _FakePhone(notes, {notes})
+    _fake_android(monkeypatch, phone)
+    args = parse("android", "verify", "--plugin", "quickadd", "--cleanup")
+    assert _outcome(verify.cmd_verify_android(args)) == 0
+    assert phone.selected == notes
+    assert phone.dirs == {notes}
+
+
+def test_android_verify_cleanup_refuses_when_started_in_scratch(monkeypatch, capsys):
+    phone = _FakePhone(ANDROID_SCRATCH_DIR, {ANDROID_SCRATCH_DIR})
+    _fake_android(monkeypatch, phone)
+    args = parse("android", "verify", "--plugin", "quickadd", "--cleanup")
+    result = _outcome(verify.cmd_verify_android(args))
+    assert ANDROID_SCRATCH_DIR in phone.dirs
+    assert isinstance(result, SystemExit) and "--keep-vault" in str(result)
+
+
+def test_android_cleanup_never_deletes_the_open_vault(monkeypatch):
+    phone = _FakePhone(ANDROID_SCRATCH_DIR, {ANDROID_SCRATCH_DIR})
+    _fake_android(monkeypatch, phone)
+    args = parse("android", "verify", "--plugin", "quickadd", "--cleanup")
+    summary = {"vault": {"name": SCRATCH, "path": ANDROID_SCRATCH_DIR}}
+    failures = []
+    _outcome(verify._android_restore_and_cleanup(
+        args, summary, failures, False, None, cleanup=True
+    ))
+    assert ANDROID_SCRATCH_DIR in phone.dirs
+    assert summary["cleanup"]["attempted"] is False
+    assert failures
