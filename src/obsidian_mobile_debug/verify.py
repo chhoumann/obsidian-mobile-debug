@@ -30,7 +30,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import posixpath
 import time
 from pathlib import Path
 from typing import Any
@@ -354,17 +353,6 @@ async def _async_value(value: Any) -> Any:
 
 
 # ---------- Android ----------
-def _android_is_scratch(
-    name: str | None, path: str | None, vault_name: str, vault_path: str
-) -> bool:
-    """Whether the open vault is the scratch vault.
-
-    The name match also catches the scratch dir recorded under another path
-    alias (e.g. /sdcard/... for /storage/emulated/0/...).
-    """
-    return name == vault_name or (bool(path) and posixpath.normpath(path) == vault_path)
-
-
 async def _android_wait_for_vault(port: int, expected_vault: str,
                                   timeout: float = VAULT_SWITCH_TIMEOUT) -> str | None:
     """Poll (reconnecting each time) until the expected vault reports open."""
@@ -424,7 +412,7 @@ async def cmd_verify_android(args: argparse.Namespace) -> int:
             summary["diagnose"]["originalVault"] = {
                 "vaultName": original_name, "selectedVaultPath": original_path,
             }
-            if args.cleanup and _android_is_scratch(
+            if args.cleanup and prov.android_vault_matches(
                 original_name, original_path, vault_name, vault_path
             ):
                 refuse_cleanup_from_scratch(vault_name, original_path)
@@ -547,9 +535,8 @@ async def _android_restore_and_cleanup(
         vault_path = summary["vault"]["path"]
         # Restore only proves the vault name; check the path Obsidian actually
         # has selected right before deleting.
-        current_name = await android.ev(args.port, "app?.vault?.getName?.() ?? null", timeout=10)
-        current_path = await android.ev(args.port, prov.CURRENT_SELECTED_VAULT_JS, timeout=10)
-        if _android_is_scratch(current_name, current_path, vault_name, vault_path):
+        current_name, current_path = await android.read_open_vault(args.port)
+        if prov.android_vault_matches(current_name, current_path, vault_name, vault_path):
             skip_cleanup_scratch_open(summary, failures, current_path)
             return
         android.run_adb(["shell", "rm", "-rf", vault_path])

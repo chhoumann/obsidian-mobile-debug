@@ -19,7 +19,9 @@ partial prior run - matching the desktop runner exactly.
 from __future__ import annotations
 
 import json
+import posixpath
 from dataclasses import dataclass
+from typing import NoReturn
 
 # A vault whose name contains one of these tokens is a disposable test vault.
 # Kept in sync with the same tuple in ios.py / android.py (the deploy/reload
@@ -125,6 +127,27 @@ def guard_remove_vault(vault_name: str) -> None:
         f"Refusing to remove vault {vault_name!r}: removal is scratch-only and its name "
         f"contains none of {SAFE_VAULT_TOKENS}. This guard has no override - rename the "
         f"vault or delete it by hand if you really mean to."
+    )
+
+
+def refuse_remove_open_vault(vault_name: str, open_path: str | None) -> NoReturn:
+    raise SystemExit(
+        f"Refusing --remove: Obsidian has the scratch vault {vault_name!r} open "
+        f"({open_path}), so removing it would delete the vault Obsidian is in. "
+        "Open another vault in Obsidian first."
+    )
+
+
+def android_vault_matches(
+    open_name: str | None, open_path: str | None, vault_name: str, vault_path: str
+) -> bool:
+    """Whether the vault Obsidian has open on Android is ``vault_path``.
+
+    The name match also catches the same dir recorded under another path
+    alias (e.g. /sdcard/... for /storage/emulated/0/...).
+    """
+    return open_name == vault_name or (
+        bool(open_path) and posixpath.normpath(open_path) == vault_path
     )
 
 

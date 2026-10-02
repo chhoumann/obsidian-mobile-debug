@@ -4,7 +4,9 @@ import json
 
 import pytest
 
+from fake_phone import ANDROID_ROOT, ANDROID_SCRATCH_DIR, SCRATCH, FakePhone, fake_android, outcome
 from obsidian_mobile_debug import android
+from obsidian_mobile_debug.cli import build_parser
 
 
 def test_forward_command():
@@ -218,15 +220,24 @@ def test_cmd_provision_idempotent_rerun_skips_and_rewrites(monkeypatch, capsys):
     assert ".obsidian/app.json" in report["skipped"]
 
 
-def test_cmd_provision_remove_guards_and_deletes(monkeypatch, capsys):
-    fake = _FakeAdb(exists=True)
-    args = argparse.Namespace(
-        vault="omd-scratch", vault_root="/sdcard/Documents", remove=True,
-    )
-    assert _run_provision(monkeypatch, args, fake) == 0
+def test_cmd_provision_remove_deletes_scratch_while_another_vault_is_open(monkeypatch, capsys):
+    notes = f"{ANDROID_ROOT}/notes"
+    phone = FakePhone(notes, {notes, ANDROID_SCRATCH_DIR})
+    fake_android(monkeypatch, phone)
+    args = build_parser().parse_args(["android", "provision", "--remove", "--vault", SCRATCH])
+    assert outcome(android.cmd_provision(args)) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["action"] == "remove" and report["removed"] is True
-    assert any(call[:3] == ["shell", "rm", "-rf"] for call in fake.shell_calls)
+    assert phone.dirs == {notes}
+
+
+def test_cmd_provision_remove_refuses_the_open_vault(monkeypatch):
+    phone = FakePhone(ANDROID_SCRATCH_DIR, {ANDROID_SCRATCH_DIR})
+    fake_android(monkeypatch, phone)
+    args = build_parser().parse_args(["android", "provision", "--remove", "--vault", SCRATCH])
+    result = outcome(android.cmd_provision(args))
+    assert ANDROID_SCRATCH_DIR in phone.dirs
+    assert isinstance(result, SystemExit) and "Open another vault" in str(result)
 
 
 def test_cmd_provision_remove_refuses_real_vault(monkeypatch):

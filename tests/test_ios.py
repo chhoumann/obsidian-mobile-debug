@@ -4,7 +4,9 @@ from pathlib import Path
 
 import pytest
 
+from fake_phone import IOS_SCRATCH_DIR, SCRATCH, FakePhone, fake_ios, outcome
 from obsidian_mobile_debug import ios
+from obsidian_mobile_debug.cli import build_parser
 
 
 def test_backup_root_env_override(monkeypatch, tmp_path):
@@ -128,3 +130,20 @@ def test_guard_real_vault_includes_identity_when_available():
     assert "Vault identity:" in message
     assert "icloud" in message
     assert "Mobile Documents" in message
+
+
+def test_cmd_provision_remove_deletes_scratch_while_another_vault_is_open(monkeypatch, capsys):
+    phone = FakePhone("documents/notes", {"/Documents/notes", IOS_SCRATCH_DIR})
+    fake_ios(monkeypatch, phone)
+    args = build_parser().parse_args(["ios", "provision", "--remove", "--vault", SCRATCH])
+    assert outcome(ios.cmd_provision(object(), args)) == 0
+    assert phone.dirs == {"/Documents/notes"}
+
+
+def test_cmd_provision_remove_refuses_the_open_vault(monkeypatch):
+    phone = FakePhone(f"documents/{SCRATCH}", {IOS_SCRATCH_DIR})
+    fake_ios(monkeypatch, phone)
+    args = build_parser().parse_args(["ios", "provision", "--remove", "--vault", SCRATCH])
+    result = outcome(ios.cmd_provision(object(), args))
+    assert IOS_SCRATCH_DIR in phone.dirs
+    assert isinstance(result, SystemExit) and "Open another vault" in str(result)

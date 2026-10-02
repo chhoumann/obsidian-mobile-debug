@@ -344,6 +344,14 @@ async def read_runtime_state(port: int, plugin: str | None) -> dict[str, Any]:
     }}))()""")
 
 
+async def read_open_vault(port: int) -> tuple[str | None, str | None]:
+    """Name and recorded (localStorage) path of the vault Obsidian has open."""
+    from . import provision as prov
+
+    name = await ev(port, "app?.vault?.getName?.() ?? null", timeout=10)
+    return name, await ev(port, prov.CURRENT_SELECTED_VAULT_JS, timeout=10)
+
+
 async def enable_plugin(port: int, plugin: str) -> dict[str, Any]:
     # setEnable(true) first: Restricted Mode adds the id to the list but will not
     # instantiate the plugin until community plugins are enabled.
@@ -491,6 +499,10 @@ async def cmd_provision(args: argparse.Namespace) -> int:
 
     if args.remove:
         prov.guard_remove_vault(vault_name)
+        with cdp_forward(args.port, args.bundle):
+            open_name, open_path = await read_open_vault(args.port)
+        if prov.android_vault_matches(open_name, open_path, vault_name, vault_path):
+            prov.refuse_remove_open_vault(vault_name, open_path)
         existed = bool(adb_out(["shell", "ls", "-d", vault_path], check=False))
         if existed:
             run_adb(["shell", "rm", "-rf", vault_path])
