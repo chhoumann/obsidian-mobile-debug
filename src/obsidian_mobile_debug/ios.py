@@ -717,10 +717,16 @@ async def cmd_provision(lockdown: Any, args: argparse.Namespace) -> int:
     )
     vault_path = f"{prov.IOS_DOCUMENTS_ROOT}/{vault_name}"
 
+    if args.remove:
+        prov.guard_remove_vault(vault_name)
+        async with inspector_session(lockdown, args.bundle) as (_target, session):
+            identity = await read_vault_identity(session)
+        if prov.ios_vault_may_be_open(identity, vault_name):
+            prov.refuse_remove_open_vault(vault_name, identity.get("selectedVaultPath"))
+
     afc = await afc_open(lockdown, args.bundle)
     try:
         if args.remove:
-            prov.guard_remove_vault(vault_name)
             existed = await afc.exists(vault_path)
             if existed:
                 undeleted = await afc.rm(vault_path, force=True)

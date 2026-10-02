@@ -61,7 +61,7 @@ def _add_provision_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--open", action="store_true",
                         help="after provisioning, switch Obsidian into the vault and reload (needs the app running)")
     parser.add_argument("--remove", action="store_true",
-                        help="delete the scratch vault instead of provisioning it (scratch names only)")
+                        help="delete the scratch vault instead of provisioning it (scratch names only; needs the app running, refuses the open vault)")
     parser.add_argument("--confirm-real-vault", action="store_true",
                         help="acknowledge provisioning into a non-scratch-named vault (never unlocks --remove)")
     parser.add_argument("--test-vault", help="whitelist this exact vault name as a safe scratch vault")

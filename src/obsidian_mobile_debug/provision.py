@@ -19,7 +19,9 @@ partial prior run - matching the desktop runner exactly.
 from __future__ import annotations
 
 import json
+import posixpath
 from dataclasses import dataclass
+from typing import NoReturn
 
 # A vault whose name contains one of these tokens is a disposable test vault.
 # Kept in sync with the same tuple in ios.py / android.py (the deploy/reload
@@ -125,6 +127,27 @@ def guard_remove_vault(vault_name: str) -> None:
         f"Refusing to remove vault {vault_name!r}: removal is scratch-only and its name "
         f"contains none of {SAFE_VAULT_TOKENS}. This guard has no override - rename the "
         f"vault or delete it by hand if you really mean to."
+    )
+
+
+def refuse_remove_open_vault(vault_name: str, open_path: str | None) -> NoReturn:
+    raise SystemExit(
+        f"Refusing --remove: Obsidian has the scratch vault {vault_name!r} open "
+        f"({open_path}), so removing it would delete the vault Obsidian is in. "
+        "Open another vault in Obsidian first."
+    )
+
+
+def android_vault_matches(
+    open_name: str | None, open_path: str | None, vault_name: str, vault_path: str
+) -> bool:
+    """Whether the vault Obsidian has open on Android is ``vault_path``.
+
+    The name match also catches the same dir recorded under another path
+    alias (e.g. /sdcard/... for /storage/emulated/0/...).
+    """
+    return open_name == vault_name or (
+        bool(open_path) and posixpath.normpath(open_path) == vault_path
     )
 
 
@@ -317,6 +340,19 @@ def afc_vault_corresponds(selected_path: str | None, afc_vault_name: str) -> boo
     if _relative_documents_parent(trimmed) is not None:
         return True
     return APP_CONTAINER_MARKER in trimmed and parent.endswith("/Documents")
+
+
+def ios_vault_may_be_open(identity: dict[str, object], afc_vault_name: str) -> bool:
+    """Whether the AFC vault /Documents/<name> may be the vault Obsidian has open.
+
+    With a recorded path this is ``afc_vault_corresponds``. Without one, a
+    runtime name match fails closed: nothing proves the open vault lives in
+    other storage.
+    """
+    path = identity.get("selectedVaultPath")
+    if not path:
+        return identity.get("vaultName") == afc_vault_name
+    return afc_vault_corresponds(str(path), afc_vault_name)
 
 
 def derive_sibling_vault_path(current_selected: str | None, vault_name: str) -> str:

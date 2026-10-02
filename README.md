@@ -283,7 +283,9 @@ opening a user's own vault never touches their trust decision.
 of `test`, `scratch`, `debug`, `sandbox`) without `--confirm-real-vault`; the
 default `omd-scratch` always passes. `--remove` is **scratch-only by design**: it
 deletes the whole vault directory, so it has no override at all and can never
-remove a real vault - not even with `--confirm-real-vault`.
+remove a real vault - not even with `--confirm-real-vault`. It also needs
+Obsidian running, and refuses to delete the vault Obsidian has open: open
+another vault first.
 
 ## The verify loop
 
@@ -346,7 +348,8 @@ The phone vault is real data. Guards, strongest first:
 - **`provision` writes into a fresh vault; `provision --remove` is scratch-only.**
   Provisioning needs `--confirm-real-vault` for a non-scratch name; removal deletes
   a whole vault dir and therefore has *no* override - a real vault can never be
-  removed by this tool. See [Provision](#provisioning-a-scratch-vault).
+  removed by this tool, and neither can the vault Obsidian has open. See
+  [Provision](#provisioning-a-scratch-vault).
 
 Set `OMD_BACKUP_DIR` to relocate the backup root.
 
