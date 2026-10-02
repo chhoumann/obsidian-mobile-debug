@@ -41,6 +41,7 @@ def config(tmp_path: Path, **overrides) -> android_setup.SetupConfig:
 
 def test_default_sdk_root_is_isolated(monkeypatch, tmp_path):
     monkeypatch.setattr(android_setup.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(android_setup.platform, "system", lambda: "Linux")
     monkeypatch.delenv("ANDROID_SDK_ROOT", raising=False)
     assert android_setup.default_sdk_root({}) == tmp_path / ".cache/obsidian-mobile-debug/android-sdk"
 
