@@ -266,7 +266,7 @@ def test_select_release_asset_requires_github_digest():
             "digest": "sha256:" + "a" * 64,
         }],
     }
-    asset = android_setup.select_release_asset(payload)
+    asset = android_setup.select_release_asset([payload])
     assert asset.version == "v1.2.3"
     assert asset.sha256 == "a" * 64
 
@@ -281,7 +281,7 @@ def test_select_release_asset_rejects_missing_or_weak_digest(digest):
         }],
     }
     with pytest.raises(android_setup.SetupError, match="SHA-256"):
-        android_setup.select_release_asset(payload)
+        android_setup.select_release_asset([payload])
 
 
 def test_verify_apk_signature_requires_one_expected_v2_signer(monkeypatch, tmp_path):
@@ -501,20 +501,69 @@ def test_software_bootstrap_restarts_services_if_system_server_already_exists(
     assert calls.index(("shell", "stop")) < calls.index(("shell", "start"))
 
 
-def test_sdk_archive_preserves_executable_tools(monkeypatch, tmp_path):
-    cfg = config(tmp_path)
+def _sdk_archive(monkeypatch, cfg, revision):
     downloads = cfg.state_dir / "downloads"
-    downloads.mkdir(parents=True)
+    downloads.mkdir(parents=True, exist_ok=True)
     archive = downloads / "tools.zip"
     with zipfile.ZipFile(archive, "w") as package:
         member = zipfile.ZipInfo("cmdline-tools/bin/sdkmanager")
         member.external_attr = 0o100755 << 16
-        package.writestr(member, "#!/bin/sh\nprintf 'sdk-ready'\n")
+        package.writestr(member, f"#!/bin/sh\nprintf 'sdk-{revision}'\n")
+        package.writestr("cmdline-tools/source.properties", f"Pkg.Revision={revision}\n")
     digest = hashlib.sha1(archive.read_bytes()).hexdigest()
     monkeypatch.setattr(
         android_setup, "_commandline_tools_spec",
         lambda: ("https://dl.google.com/android/repository/tools.zip", digest),
     )
     monkeypatch.setattr(android_setup.shutil, "which", lambda name: "/usr/bin/java")
+
+
+def test_sdk_archive_preserves_executable_tools(monkeypatch, tmp_path):
+    cfg = config(tmp_path)
+    _sdk_archive(monkeypatch, cfg, android_setup.COMMANDLINE_TOOLS_VERSION)
     sdkmanager = android_setup.ensure_commandline_tools(cfg)
-    assert subprocess.check_output([sdkmanager], text=True) == "sdk-ready"
+    assert subprocess.check_output([sdkmanager], text=True) == (
+        f"sdk-{android_setup.COMMANDLINE_TOOLS_VERSION}"
+    )
+
+
+def test_newer_command_line_tools_are_kept(monkeypatch, tmp_path):
+    cfg = config(tmp_path)
+    _sdk_archive(monkeypatch, cfg, "99.0")
+    monkeypatch.setattr(android_setup, "COMMANDLINE_TOOLS_VERSION", "99.0")
+    android_setup.ensure_commandline_tools(cfg)
+
+    monkeypatch.undo()
+    _sdk_archive(monkeypatch, cfg, android_setup.COMMANDLINE_TOOLS_VERSION)
+    sdkmanager = android_setup.ensure_commandline_tools(cfg)
+    assert subprocess.check_output([sdkmanager], text=True) == "sdk-99.0"
+
+
+def test_outdated_command_line_tools_are_replaced(monkeypatch, tmp_path):
+    cfg = config(tmp_path)
+    _sdk_archive(monkeypatch, cfg, "20.0")
+    monkeypatch.setattr(android_setup, "COMMANDLINE_TOOLS_VERSION", "20.0")
+    android_setup.ensure_commandline_tools(cfg)
+
+    monkeypatch.undo()
+    _sdk_archive(monkeypatch, cfg, android_setup.COMMANDLINE_TOOLS_VERSION)
+    sdkmanager = android_setup.ensure_commandline_tools(cfg)
+    assert subprocess.check_output([sdkmanager], text=True) == (
+        f"sdk-{android_setup.COMMANDLINE_TOOLS_VERSION}"
+    )
+
+
+def test_obsidian_apk_comes_from_newest_stable_release_that_ships_one():
+    def release(tag, *assets, prerelease=False):
+        return {"tag_name": tag, "prerelease": prerelease, "assets": [
+            {"name": name, "browser_download_url": f"https://github.com/{name}",
+             "digest": "sha256:" + "ab" * 32}
+            for name in assets
+        ]}
+
+    asset = android_setup.select_release_asset([
+        release("v1.15.0", "Obsidian-1.15.0.apk", prerelease=True),
+        release("v1.14.5", "Obsidian-1.14.5.dmg"),
+        release("v1.14.4", "Obsidian-1.14.4.dmg", "Obsidian-1.14.4.apk"),
+    ])
+    assert (asset.version, asset.name) == ("v1.14.4", "Obsidian-1.14.4.apk")

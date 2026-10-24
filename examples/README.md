@@ -1,16 +1,16 @@
 # Examples - historical campaign scripts
 
 These scripts predate the `omd` CLI. They are the plugin-specific scratch tools
-that the generalized CLI was distilled from, kept verbatim because each one
+that the generalized CLI was distilled from, kept close to as written because each one
 documents a real on-device debugging campaign (mostly the PodNotes mobile OOM
 investigation). They are **recipes, not supported entry points** - for everyday
 work use `omd ios ...` / `omd android ...` instead.
 
-Each still runs standalone the way it always did, e.g.:
+Run them from the repo root in the locked project environment, e.g.:
 
 ```bash
-uv run --no-project --with pymobiledevice3 python examples/podnotes_ios.py pages
-uv run --no-project --with websockets python examples/android_dl_monitor.py
+uv run --locked python examples/podnotes_ios.py pages
+uv run --locked python examples/android_dl_monitor.py
 ```
 
 ## What each one is

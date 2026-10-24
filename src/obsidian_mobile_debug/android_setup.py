@@ -26,20 +26,14 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 
-COMMANDLINE_TOOLS_REVISION = "14742923"
-COMMANDLINE_TOOLS: dict[str, tuple[str, str]] = {
-    "Linux": (
-        f"https://dl.google.com/android/repository/commandlinetools-linux-"
-        f"{COMMANDLINE_TOOLS_REVISION}_latest.zip",
-        "48833c34b761c10cb20bcd16582129395d121b27",
-    ),
-    "Darwin": (
-        f"https://dl.google.com/android/repository/commandlinetools-mac-"
-        f"{COMMANDLINE_TOOLS_REVISION}_latest.zip",
-        "cc27cca4b84bfdbc7df17e3d0a01d0c640d8ee71",
-    ),
+COMMANDLINE_TOOLS_VERSION = "23.0"
+COMMANDLINE_TOOLS_REVISION = "16111833"
+COMMANDLINE_TOOLS_SHA1 = {
+    "linux": "e025545c62a8e64c7559119566a569fb1dec5f60",
+    "mac_x86_64": "112cf9618794a997ff273537d55bee02c22abffe",
+    "mac_arm64": "ad03dc49bfacfd52c110b14104ea548b8a07e830",
 }
-OBSIDIAN_RELEASE_API = "https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest"
+OBSIDIAN_RELEASES_API = "https://api.github.com/repos/obsidianmd/obsidian-releases/releases?per_page=20"
 OBSIDIAN_SIGNER_SHA256 = "bd3bd52f4427b5ab7f8059d071a35e3de943c646546d32313da5f1cac254b7e4"
 WATCHDOG_MARKERS = (
     "WATCHDOG KILLING SYSTEM PROCESS",
@@ -279,15 +273,35 @@ def _download(url: str, destination: Path) -> None:
 
 def _commandline_tools_spec() -> tuple[str, str]:
     system = platform.system()
-    try:
-        return COMMANDLINE_TOOLS[system]
-    except KeyError as exc:
-        raise SetupError(f"Automatic Android SDK installation is not supported on {system}") from exc
+    if system == "Linux":
+        archive = "linux"
+    elif system == "Darwin":
+        archive = "mac_arm64" if platform.machine().lower() in {"arm64", "aarch64"} else "mac_x86_64"
+    else:
+        raise SetupError(f"Automatic Android SDK installation is not supported on {system}")
+    return (
+        f"https://dl.google.com/android/repository/commandlinetools-{archive}-"
+        f"{COMMANDLINE_TOOLS_REVISION}_latest.zip",
+        COMMANDLINE_TOOLS_SHA1[archive],
+    )
+
+
+def _version(text: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in text.split("."))
+
+
+def _commandline_tools_version(target: Path) -> tuple[int, ...]:
+    properties = target / "source.properties"
+    text = properties.read_text() if properties.is_file() else ""
+    match = re.search(r"^Pkg\.Revision=([0-9.]+)\s*$", text, re.MULTILINE)
+    return _version(match.group(1)) if match else ()
 
 
 def ensure_commandline_tools(config: SetupConfig) -> Path:
-    sdkmanager = config.sdk_root / "cmdline-tools" / "latest" / "bin" / "sdkmanager"
-    if sdkmanager.is_file():
+    target = config.sdk_root / "cmdline-tools" / "latest"
+    sdkmanager = target / "bin" / "sdkmanager"
+    # Upgrade older tools in place, but never downgrade a newer shared SDK.
+    if sdkmanager.is_file() and _commandline_tools_version(target) >= _version(COMMANDLINE_TOOLS_VERSION):
         return sdkmanager
     if not shutil.which("java"):
         raise SetupError(
@@ -305,7 +319,6 @@ def ensure_commandline_tools(config: SetupConfig) -> Path:
             f"Android command-line tools checksum mismatch: expected {expected_sha1}, got {actual_sha1}"
         )
 
-    target = config.sdk_root / "cmdline-tools" / "latest"
     temporary = config.state_dir / "commandline-tools-extract"
     shutil.rmtree(temporary, ignore_errors=True)
     temporary.mkdir(parents=True)
@@ -688,10 +701,23 @@ def wait_for_stable_boot(config: SetupConfig, adb: Path, acceleration: str) -> d
     raise SetupError(f"Android did not reach a stable boot within {config.boot_timeout:.0f}s: {last}")
 
 
-def select_release_asset(payload: Mapping[str, Any]) -> ReleaseAsset:
-    candidates = [asset for asset in payload.get("assets", []) if asset.get("name", "").endswith(".apk")]
+def _release_apks(release: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    return [asset for asset in release.get("assets", []) if asset.get("name", "").endswith(".apk")]
+
+
+def select_release_asset(releases: Sequence[Mapping[str, Any]]) -> ReleaseAsset:
+    """The APK of the newest stable release; desktop-only patch releases ship none."""
+    payload = next(
+        (release for release in releases if not release.get("prerelease") and _release_apks(release)),
+        None,
+    )
+    if payload is None:
+        raise SetupError(f"None of the {len(releases)} latest Obsidian releases ships an APK")
+    candidates = _release_apks(payload)
     if len(candidates) != 1:
-        raise SetupError(f"Expected one APK in the latest Obsidian release, found {len(candidates)}")
+        raise SetupError(
+            f"Expected one APK in Obsidian release {payload.get('tag_name')}, found {len(candidates)}"
+        )
     asset = candidates[0]
     digest = str(asset.get("digest") or "")
     if not digest.startswith("sha256:") or not re.fullmatch(r"[0-9a-fA-F]{64}", digest[7:]):
@@ -706,7 +732,7 @@ def select_release_asset(payload: Mapping[str, Any]) -> ReleaseAsset:
 
 def latest_obsidian_asset() -> ReleaseAsset:
     request = urllib.request.Request(
-        OBSIDIAN_RELEASE_API,
+        OBSIDIAN_RELEASES_API,
         headers={"Accept": "application/vnd.github+json", "User-Agent": "obsidian-mobile-debug"},
     )
     # This request is fixed to the official GitHub HTTPS API endpoint.

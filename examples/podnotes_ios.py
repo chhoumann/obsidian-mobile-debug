@@ -13,7 +13,7 @@ Subcommands:
   logs [--seconds N]       Stream console + uncaught errors from the webview.
 
 Run with:
-  uv run --no-project --with pymobiledevice3 python podnotes_ios.py <cmd>
+  uv run --locked python examples/podnotes_ios.py <cmd>
   # or: ~/.local/share/uv/tools/pymobiledevice3/bin/python podnotes_ios.py <cmd>
 """
 import argparse

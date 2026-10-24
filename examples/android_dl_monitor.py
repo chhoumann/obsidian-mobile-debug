@@ -2,13 +2,13 @@
 """Fire the PodNotes download on the Android emulator and watch the Chromium
 renderer's JS heap + on-disk progress + liveness, to catch/measure the OOM.
 
-  uv run --no-project --with websockets python android_dl_monitor.py
+  uv run --locked python examples/android_dl_monitor.py
 """
 import asyncio
 import json
 import urllib.request
 
-import websockets
+from websockets.asyncio.client import connect
 
 CDP = "http://localhost:9333"
 FILE = "PodNotes/A Way with Words/Flash in the Pan - 22 June 2026.mp3"
@@ -20,7 +20,7 @@ def page_ws():
 
 
 async def main():
-    ws = await websockets.connect(page_ws(), max_size=None, open_timeout=20)
+    ws = await connect(page_ws(), max_size=None, open_timeout=20, proxy=None)
     _id = 0
 
     async def ev(expr, await_promise=True, timeout=30):
