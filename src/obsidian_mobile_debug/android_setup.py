@@ -26,18 +26,12 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 
-COMMANDLINE_TOOLS_REVISION = "14742923"
-COMMANDLINE_TOOLS: dict[str, tuple[str, str]] = {
-    "Linux": (
-        f"https://dl.google.com/android/repository/commandlinetools-linux-"
-        f"{COMMANDLINE_TOOLS_REVISION}_latest.zip",
-        "48833c34b761c10cb20bcd16582129395d121b27",
-    ),
-    "Darwin": (
-        f"https://dl.google.com/android/repository/commandlinetools-mac-"
-        f"{COMMANDLINE_TOOLS_REVISION}_latest.zip",
-        "cc27cca4b84bfdbc7df17e3d0a01d0c640d8ee71",
-    ),
+COMMANDLINE_TOOLS_VERSION = "23.0"
+COMMANDLINE_TOOLS_REVISION = "16111833"
+COMMANDLINE_TOOLS_SHA1 = {
+    "linux": "e025545c62a8e64c7559119566a569fb1dec5f60",
+    "mac_x86_64": "112cf9618794a997ff273537d55bee02c22abffe",
+    "mac_arm64": "ad03dc49bfacfd52c110b14104ea548b8a07e830",
 }
 OBSIDIAN_RELEASE_API = "https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest"
 OBSIDIAN_SIGNER_SHA256 = "bd3bd52f4427b5ab7f8059d071a35e3de943c646546d32313da5f1cac254b7e4"
@@ -279,15 +273,35 @@ def _download(url: str, destination: Path) -> None:
 
 def _commandline_tools_spec() -> tuple[str, str]:
     system = platform.system()
-    try:
-        return COMMANDLINE_TOOLS[system]
-    except KeyError as exc:
-        raise SetupError(f"Automatic Android SDK installation is not supported on {system}") from exc
+    if system == "Linux":
+        archive = "linux"
+    elif system == "Darwin":
+        archive = "mac_arm64" if platform.machine().lower() in {"arm64", "aarch64"} else "mac_x86_64"
+    else:
+        raise SetupError(f"Automatic Android SDK installation is not supported on {system}")
+    return (
+        f"https://dl.google.com/android/repository/commandlinetools-{archive}-"
+        f"{COMMANDLINE_TOOLS_REVISION}_latest.zip",
+        COMMANDLINE_TOOLS_SHA1[archive],
+    )
+
+
+def _version(text: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in text.split("."))
+
+
+def _commandline_tools_version(target: Path) -> tuple[int, ...]:
+    properties = target / "source.properties"
+    text = properties.read_text() if properties.is_file() else ""
+    match = re.search(r"^Pkg\.Revision=([0-9.]+)\s*$", text, re.MULTILINE)
+    return _version(match.group(1)) if match else ()
 
 
 def ensure_commandline_tools(config: SetupConfig) -> Path:
-    sdkmanager = config.sdk_root / "cmdline-tools" / "latest" / "bin" / "sdkmanager"
-    if sdkmanager.is_file():
+    target = config.sdk_root / "cmdline-tools" / "latest"
+    sdkmanager = target / "bin" / "sdkmanager"
+    # Upgrade older tools in place, but never downgrade a newer shared SDK.
+    if sdkmanager.is_file() and _commandline_tools_version(target) >= _version(COMMANDLINE_TOOLS_VERSION):
         return sdkmanager
     if not shutil.which("java"):
         raise SetupError(
@@ -305,7 +319,6 @@ def ensure_commandline_tools(config: SetupConfig) -> Path:
             f"Android command-line tools checksum mismatch: expected {expected_sha1}, got {actual_sha1}"
         )
 
-    target = config.sdk_root / "cmdline-tools" / "latest"
     temporary = config.state_dir / "commandline-tools-extract"
     shutil.rmtree(temporary, ignore_errors=True)
     temporary.mkdir(parents=True)
