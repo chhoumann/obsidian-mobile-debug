@@ -234,7 +234,7 @@ async def _runtime_evaluate(session: Any, expression: str, timeout: float = INSP
         return await asyncio.wait_for(
             session.runtime_evaluate(expression, return_by_value=True), timeout=timeout
         )
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         raise TimeoutError(
             f"Web Inspector Runtime.evaluate timed out after {timeout}s: {expression[:120]}"
         ) from exc

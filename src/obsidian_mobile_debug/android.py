@@ -240,7 +240,7 @@ async def capture_console_events(port: int, seconds: float) -> list[dict[str, An
     ws_url, _url = discover_page_ws(port)
     async with _cdp_connect(ws_url) as ws:
         await ws.send(json.dumps({"id": 1, "method": "Runtime.enable"}))
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         deadline = loop.time() + seconds
         while True:
             remaining = deadline - loop.time()
@@ -248,7 +248,7 @@ async def capture_console_events(port: int, seconds: float) -> list[dict[str, An
                 break
             try:
                 response = json.loads(await asyncio.wait_for(ws.recv(), remaining))
-            except (TimeoutError, asyncio.TimeoutError):
+            except TimeoutError:
                 break
             if response.get("method") == "Runtime.consoleAPICalled":
                 events.append(format_cdp_console_event(response.get("params") or {}, _utc_now_iso()))
@@ -287,7 +287,7 @@ async def ev_with_console(
             },
         }))
         value: Any = None
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
         while True:
             remaining = deadline - loop.time()
@@ -314,7 +314,7 @@ async def ev_with_console(
                 break
             try:
                 response = json.loads(await asyncio.wait_for(ws.recv(), remaining))
-            except (TimeoutError, asyncio.TimeoutError):
+            except TimeoutError:
                 break
             if response.get("method") == "Runtime.consoleAPICalled":
                 events.append(format_cdp_console_event(response.get("params") or {}, now()))
@@ -569,8 +569,8 @@ async def cmd_logs(args: argparse.Namespace) -> int:
     )
     tokens = ("obsidian", "webview", "chromium", "fatal", "crash")
     try:
-        deadline = asyncio.get_event_loop().time() + args.seconds
-        while asyncio.get_event_loop().time() < deadline:
+        deadline = asyncio.get_running_loop().time() + args.seconds
+        while asyncio.get_running_loop().time() < deadline:
             line = await asyncio.to_thread(process.stdout.readline)
             if not line:
                 break
