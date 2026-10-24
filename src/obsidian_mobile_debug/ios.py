@@ -141,8 +141,8 @@ async def _create_lockdown() -> Any:
         from pymobiledevice3.lockdown import create_using_usbmux
     except ImportError as exc:
         raise SystemExit(
-            "pymobiledevice3 is not installed. Install this tool with its dependencies "
-            "(`uv tool install .`) or run inside `uv run --with pymobiledevice3 ...`."
+            "pymobiledevice3 is not installed. Run omd from a checkout with its "
+            "locked dependencies: `uv sync --locked`, then `uv run --locked omd ...`."
         ) from exc
     try:
         return await create_using_usbmux()

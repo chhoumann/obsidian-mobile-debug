@@ -43,16 +43,25 @@ websocket. It sets up and tears down the forward for you.
 
 ## Install
 
-```bash
-uv tool install obsidian-mobile-debug     # or, from a checkout: uv tool install .
-```
-
-That puts `omd` on your PATH with its dependencies (`pymobiledevice3`,
-`websockets`) isolated. No global install needed for one-offs:
+OMD is not published to PyPI. Install it from a checkout with the locked
+dependency set:
 
 ```bash
-uv run --with obsidian-mobile-debug omd ios pages
+git clone https://github.com/chhoumann/obsidian-mobile-debug
+cd obsidian-mobile-debug
+uv sync --locked --no-dev
+uv run --locked --no-dev omd --help
 ```
+
+To put `omd` on your PATH, link the locked environment's entry point:
+
+```bash
+ln -s "$PWD/.venv/bin/omd" ~/.local/bin/omd
+```
+
+`uv.lock` pins every transitive dependency with hashes. Resolution ignores
+releases younger than 7 days (`[tool.uv] exclude-newer`), so `uv lock --upgrade`
+never picks up a publish that hasn't had time to be vetted.
 
 ### iOS prerequisites
 
@@ -380,7 +389,15 @@ multi-statement probes work despite WebKit's `runtime_evaluate` quirks.
 
 `examples/` holds the original plugin-specific scratch scripts (the PodNotes OOM
 campaign, provider surveys, the Waypoint watcher-storm validator). They predate
-the CLI and are kept verbatim as recipes; see `examples/README.md`.
+the CLI and are kept as recipes; see `examples/README.md`.
+
+## Development
+
+```bash
+uv sync --locked
+uv run --locked pytest -q
+uv run --locked ruff check
+```
 
 ## Key learnings / gotchas
 
