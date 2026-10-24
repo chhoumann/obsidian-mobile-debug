@@ -116,7 +116,8 @@ def _cdp_page(frames):
     def handler(ws):
         for frame in frames:
             ws.send(json.dumps(frame))
-        ws.wait_closed()
+        for _message in ws:  # hold the socket open until the client closes it
+            pass
 
     with serve(handler, "127.0.0.1", 0, process_request=process_request) as server:
         threading.Thread(target=server.serve_forever, daemon=True).start()
