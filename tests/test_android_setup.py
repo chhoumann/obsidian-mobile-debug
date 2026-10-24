@@ -587,4 +587,5 @@ def test_run_tolerates_output_that_is_not_utf8():
     result = android_setup.run(
         [sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'boot ok \\xc0 WATCHDOG')"]
     )
-    assert "boot ok" in result.stdout and "WATCHDOG" in result.stdout
+    # Replacing, not dropping, keeps bytes on either side from fusing into a marker.
+    assert result.stdout == "boot ok \ufffd WATCHDOG"
