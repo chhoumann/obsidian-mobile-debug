@@ -27,7 +27,7 @@ import os
 import posixpath
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -146,7 +146,7 @@ async def _create_lockdown() -> Any:
         ) from exc
     try:
         return await create_using_usbmux()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise SystemExit(
             f"Could not connect to an iPhone over usbmux: {exc}\n"
             "Unlock the phone, trust this Mac, and confirm it is connected over USB."
@@ -359,11 +359,9 @@ async def afc_find_vault(afc: Any, prefer: str | None) -> tuple[str, list[str]]:
     for name in await afc.listdir("/Documents"):
         if name in (".", "..", ""):
             continue
-        try:
+        with contextlib.suppress(Exception):
             if await afc.exists(f"/Documents/{name}/.obsidian"):
                 candidates.append(name)
-        except Exception:  # noqa: BLE001
-            continue
 
     if prefer and prefer != "auto":
         if prefer in candidates:
@@ -409,7 +407,7 @@ async def collect_remote_file_manifest(afc: Any, remote_dir: str) -> dict[str, d
 async def backup_existing_plugin(
     afc: Any, remote_plugin_dir: str, dev_id: str, vault_name: str, plugin: str, state: Any
 ) -> Path:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     target = backup_dir_for(dev_id, vault_name, plugin, stamp)
     target.mkdir(parents=True, exist_ok=False)
 
@@ -584,10 +582,8 @@ async def cmd_deploy(lockdown: Any, args: argparse.Namespace) -> int:
                     await backup_existing_plugin(afc, pdir, dev_id, vault_name, args.plugin, state_before)
                 )
 
-            try:
+            with contextlib.suppress(Exception):
                 await afc.makedirs(pdir)
-            except Exception:  # noqa: BLE001
-                pass
 
             pushed: dict[str, Any] = {}
             for name, path in files.items():
@@ -793,7 +789,7 @@ ERROR_HOOK_JS = """((w) => {
 
 
 def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+    return datetime.now(UTC).isoformat(timespec="milliseconds")
 
 
 def install_console_capture(session: Any, emit: Any) -> None:

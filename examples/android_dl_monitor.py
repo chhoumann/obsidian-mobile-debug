@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Fire the PodNotes download on the Android emulator and watch the Chromium
 renderer's JS heap + on-disk progress + liveness, to catch/measure the OOM.
 

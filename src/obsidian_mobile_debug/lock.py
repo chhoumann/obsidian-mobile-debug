@@ -23,7 +23,7 @@ import contextlib
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -48,7 +48,7 @@ def _owner_info() -> dict[str, Any]:
     return {
         "pid": os.getpid(),
         "command": " ".join(sys.argv),
-        "startedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "startedAt": datetime.now(UTC).isoformat(timespec="seconds"),
     }
 
 
@@ -68,8 +68,10 @@ def _read_owner(fd: int) -> dict[str, Any]:
 def contention_message(device_id: str, bundle: str, owner: dict[str, Any]) -> str:
     pid = owner.get("pid")
     lines = [
-        f"Another OMD process already owns the Web Inspector session for device "
-        f"{device_id!r} / bundle {bundle!r}.",
+        (
+            f"Another OMD process already owns the Web Inspector session for device "
+            f"{device_id!r} / bundle {bundle!r}."
+        ),
         f"Owner: pid {pid or 'unknown'}"
         + (f", started {owner['startedAt']}" if owner.get("startedAt") else ""),
     ]

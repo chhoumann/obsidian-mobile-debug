@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Drive Obsidian on a USB-connected iPhone via the WebKit Web Inspector.
 
 Solves the sync gap: pushes a locally-built Obsidian plugin (main.js /
@@ -18,9 +17,11 @@ Run with:
 """
 import argparse
 import asyncio
+import contextlib
 import json
 import logging
 import os
+from pathlib import Path
 
 from pymobiledevice3.lockdown import create_using_usbmux
 from pymobiledevice3.services.house_arrest import HouseArrestService
@@ -103,12 +104,11 @@ async def afc_find_vault(afc, prefer):
     for name in await afc.listdir("/Documents"):
         if name in (".", ".."):
             continue
-        try:
-            if ".obsidian" in await afc.listdir(f"/Documents/{name}"):
-                if prefer is None or name == prefer:
-                    return f"/Documents/{name}"
-        except Exception:  # noqa: BLE001
-            continue
+        with contextlib.suppress(Exception):
+            if ".obsidian" in await afc.listdir(f"/Documents/{name}") and (
+                prefer is None or name == prefer
+            ):
+                return f"/Documents/{name}"
     raise SystemExit("No Obsidian vault (.obsidian) found under the app's Documents.")
 
 
@@ -146,18 +146,15 @@ async def cmd_deploy(lockdown):
         vault = await afc_find_vault(afc, prefer="notes")
         pdir = f"{vault}/.obsidian/plugins/{PLUGIN_ID}"
         print(f"-> AFC target: {pdir}")
-        try:
+        with contextlib.suppress(Exception):  # already exists
             await afc.makedirs(pdir)
-        except Exception:  # noqa: BLE001
-            pass  # already exists
 
         files = dict(LOCAL_FILES)
         if os.path.isfile(STYLES_SRC):
             files["styles.css"] = STYLES_SRC
 
         for name, path in files.items():
-            with open(path, "rb") as f:
-                data = f.read()
+            data = Path(path).read_bytes()
             got = await afc_put(afc, f"{pdir}/{name}", data)
             flag = "OK" if got == len(data) else f"MISMATCH (want {len(data)})"
             print(f"   pushed {name:13} {got}B  {flag}")
@@ -223,8 +220,8 @@ async def cmd_repro(session, max_wait=240, count=1):
     try:
         await asyncio.wait_for(
             session.runtime_evaluate(
-                "(()=>{for(let i=0;i<%d;i++){app.commands.executeCommandById('podnotes:download-playing-episode');}"
-                "return 'fired'})()" % count,
+                f"(()=>{{for(let i=0;i<{count};i++){{app.commands.executeCommandById('podnotes:download-playing-episode');}}"
+                "return 'fired'})()",
                 return_by_value=True),
             timeout=10)
     except Exception as e:  # noqa: BLE001

@@ -27,7 +27,7 @@ def resolve_probe_path(probe: str) -> Path:
     if candidate.is_file():
         return candidate
 
-    name = probe[:-3] if probe.endswith(".js") else probe
+    name = probe.removesuffix(".js")
     bundled = BUNDLED_PROBES_DIR / f"{name}.js"
     if bundled.is_file():
         return bundled

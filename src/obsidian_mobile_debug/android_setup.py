@@ -7,13 +7,14 @@ software-emulator bootstrap, APK verification, and boot-health assertions.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import os
 import platform
 import re
-import signal
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -21,10 +22,10 @@ import time
 import urllib.parse
 import urllib.request
 import zipfile
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
-
+from typing import Any
 
 COMMANDLINE_TOOLS_VERSION = "23.0"
 COMMANDLINE_TOOLS_REVISION = "16111833"
@@ -280,8 +281,10 @@ def _commandline_tools_spec() -> tuple[str, str]:
     else:
         raise SetupError(f"Automatic Android SDK installation is not supported on {system}")
     return (
-        f"https://dl.google.com/android/repository/commandlinetools-{archive}-"
-        f"{COMMANDLINE_TOOLS_REVISION}_latest.zip",
+        (
+            f"https://dl.google.com/android/repository/commandlinetools-{archive}-"
+            f"{COMMANDLINE_TOOLS_REVISION}_latest.zip"
+        ),
         COMMANDLINE_TOOLS_SHA1[archive],
     )
 
@@ -857,11 +860,9 @@ def terminate_launched_emulator(
 ) -> None:
     """Shut down the launched emulator cleanly, then use scoped fallbacks."""
     if adb is not None and serial is not None:
-        try:
+        with contextlib.suppress(SetupError):
             _adb(adb, serial, "shell", "sync", check=False, timeout=120)
             _adb(adb, serial, "shell", "reboot", "-p", check=False, timeout=30)
-        except Exception:
-            pass
         graceful_deadline = time.monotonic() + 60
         while time.monotonic() < graceful_deadline:
             try:
@@ -871,10 +872,8 @@ def terminate_launched_emulator(
             if waited == pid:
                 return
             time.sleep(0.25)
-        try:
+        with contextlib.suppress(SetupError):
             _adb(adb, serial, "emu", "kill", check=False, timeout=30)
-        except Exception:
-            pass
         console_deadline = time.monotonic() + 30
         while time.monotonic() < console_deadline:
             try:
@@ -1013,7 +1012,7 @@ def verify_cdp_runtime(
                 target, target_url = discover_page_ws(port)
                 first = asyncio.run(ev(port, "1+1", timeout=300))
                 target_after_first, _url = discover_page_ws(port)
-            except (Exception, SystemExit):
+            except (Exception, SystemExit):  # noqa: BLE001
                 _assert_cdp_health(config, adb, app_pid)
                 transitions += 1
                 time.sleep(10)
@@ -1035,7 +1034,7 @@ def verify_cdp_runtime(
                     continue
                 second = asyncio.run(ev(port, "1+1", timeout=300))
                 target_after_second, _url = discover_page_ws(port)
-            except (Exception, SystemExit):
+            except (Exception, SystemExit):  # noqa: BLE001
                 _assert_cdp_health(config, adb, app_pid)
                 transitions += 1
                 time.sleep(10)
@@ -1096,7 +1095,7 @@ def capture_failure_diagnostics(config: SetupConfig, adb: Path) -> Path | None:
         path.write_text(result.stdout)
         path.chmod(0o600)
         return path
-    except Exception:
+    except (SetupError, OSError):
         return None
 
 
