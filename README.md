@@ -153,6 +153,14 @@ by syncing the guest and requesting Android power-off first, then falling back
 to console shutdown and its scoped process group if needed. It keeps the log for
 diagnosis.
 
+On Linux with a systemd user session, the emulator runs in its own scope
+(`omd-emulator-<avd>-<port>`), so it keeps running after the terminal or agent
+session that started setup ends. A new process session alone is not enough:
+stopping the caller's cgroup kills every process in it. The scope still ends
+with the user's systemd manager, which logind stops after the last login
+session closes unless lingering is on (`loginctl enable-linger`), as it usually
+is not for SSH-only users.
+
 `./android_teardown.sh` stops and deletes only OMD's isolated AVD. Set
 `BACKEND=container` to remove the named ReDroid container instead, while keeping
 its data for reuse. Set `REMOVE_SDK=1` to remove OMD-owned SDK/cache state too.
