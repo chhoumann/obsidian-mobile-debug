@@ -966,6 +966,41 @@ def install_and_launch(
     raise SetupError("Obsidian launched but did not expose a WebView DevTools socket within 300s")
 
 
+def sandboxed_renderer_pid(services: str, bundle: str) -> int | None:
+    """PID of the isolated WebView renderer process ``bundle`` has bound, if any.
+
+    Reads ``dumpsys activity services``: the app's SandboxedProcessService
+    record names its hosting process, whose ``/u<user>a<app>i<n>`` suffix marks
+    an isolated UID. This holds on every Android release, unlike the
+    "Multiprocess enabled" line ``dumpsys webviewupdate`` dropped in Android 15.
+    """
+    for record in services.split("* ServiceRecord{")[1:]:
+        header = record.split("\n", 1)[0]
+        if f" {bundle}/org.chromium.content.app.SandboxedProcessService" not in header:
+            continue
+        match = re.search(r"^\s*app=ProcessRecord\{\S+ (\d+):\S*/u\d+(?:a\d+)?i\d+\}", record, re.MULTILINE)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def wait_for_sandboxed_renderer(config: SetupConfig, adb: Path, timeout: float = 120) -> int:
+    deadline = time.monotonic() + timeout
+    while True:
+        services = _adb_text(
+            adb, config.serial, "shell", "dumpsys", "activity", "services", "SandboxedProcessService",
+            check=False, timeout=60,
+        )
+        pid = sandboxed_renderer_pid(services, config.bundle)
+        if pid is not None:
+            return pid
+        if time.monotonic() > deadline:
+            raise SetupError(
+                f"{config.bundle} did not bind an isolated WebView renderer process within {timeout:.0f}s"
+            )
+        time.sleep(5)
+
+
 def verify_android_sandbox(
     config: SetupConfig, adb: Path, app_pid: int,
 ) -> dict[str, Any]:
@@ -989,11 +1024,10 @@ def verify_android_sandbox(
             "Obsidian did not run under its isolated Android application UID: "
             f"package={package_uid}, process={process_uid}"
         )
+    renderer_pid = wait_for_sandboxed_renderer(config, adb)
     webview = _adb_text(
         adb, config.serial, "shell", "dumpsys", "webviewupdate", timeout=120
     )
-    if "Multiprocess enabled: true" not in webview:
-        raise SetupError("Android WebView multiprocess isolation is not enabled")
     webview_package = re.search(
         r"Current WebView package \(name, version\): \(([^,]+), ([^)]+)\)", webview
     )
@@ -1003,6 +1037,7 @@ def verify_android_sandbox(
         "packageUid": package_uid,
         "processUid": process_uid,
         "webviewMultiprocess": True,
+        "webviewRendererPid": renderer_pid,
         "webviewPackage": webview_package.group(1),
         "webviewVersion": webview_package.group(2),
     }
