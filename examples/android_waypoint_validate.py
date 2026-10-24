@@ -17,7 +17,7 @@ Run it across the matrix to show the modify-storm collapse and the crash vanish:
   new build  + Waypoint off  -> completes, 1 create + 0 modify on the .mp3
   new build  + Waypoint on   -> completes (the fix)
 
-  uv run --no-project --with websockets python android_waypoint_validate.py \
+  uv run --locked python examples/android_waypoint_validate.py \
      --label new+wp-on --expected-bytes 48997159 [--folder PodNotes] [--max 150]
 
 The episode is whatever PodNotes currently has loaded; set it beforehand (e.g. via
@@ -29,7 +29,7 @@ import json
 import time
 import urllib.request
 
-import websockets
+from websockets.asyncio.client import connect
 
 CDP = "http://localhost:9333"
 
@@ -65,7 +65,7 @@ async def main():
     ap.add_argument("--no-reset", action="store_true", help="keep existing downloads")
     args = ap.parse_args()
 
-    ws = await websockets.connect(page_ws(), max_size=None, open_timeout=20)
+    ws = await connect(page_ws(), max_size=None, open_timeout=20, proxy=None)
     _id = 0
 
     async def ev(expr, await_promise=True, timeout=30):

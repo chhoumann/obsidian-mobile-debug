@@ -5,7 +5,7 @@ Sets the current episode to the given URL, clears any prior download, fires the
 download command, and measures wall-time + byte-perfection + peak JS heap +
 crash. Prints one JSON line.
 
-  uv run --no-project --with websockets python android_timed_download.py \
+  uv run --locked python examples/android_timed_download.py \
      --url <mp3> --title T --podcast P [--expected-bytes N]
 """
 import argparse
@@ -14,7 +14,7 @@ import json
 import time
 import urllib.request
 
-import websockets
+from websockets.asyncio.client import connect
 
 CDP = "http://localhost:9333"
 
@@ -33,7 +33,7 @@ async def main():
     ap.add_argument("--max", type=int, default=300)
     args = ap.parse_args()
 
-    ws = await websockets.connect(page_ws(), max_size=None, open_timeout=20)
+    ws = await connect(page_ws(), max_size=None, open_timeout=20, proxy=None)
     _id = 0
 
     async def ev(expr, await_promise=True, timeout=30):
