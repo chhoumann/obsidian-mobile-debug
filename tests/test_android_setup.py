@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -579,3 +580,12 @@ def test_own_scope_prefix_falls_back_when_the_user_manager_stalls(monkeypatch, t
     monkeypatch.setattr(android_setup.shutil, "which", lambda _name: "/usr/bin/systemd-run")
     monkeypatch.setattr(android_setup, "run", stalled)
     assert android_setup.own_scope_prefix(config(tmp_path)) == []
+
+
+def test_run_tolerates_output_that_is_not_utf8():
+    # Android logcat can contain arbitrary bytes; the boot gate reads it whole.
+    result = android_setup.run(
+        [sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'boot ok \\xc0 WATCHDOG')"]
+    )
+    # Replacing, not dropping, keeps bytes on either side from fusing into a marker.
+    assert result.stdout == "boot ok \ufffd WATCHDOG"
