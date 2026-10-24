@@ -1,5 +1,8 @@
 """Pure pieces of the verify loop: probe resolution, pass rules, CLI, events."""
 import argparse
+import asyncio
+import contextlib
+import json
 
 import pytest
 
@@ -95,90 +98,83 @@ def test_format_cdp_console_event_unknown_type_falls_back_to_log():
     assert event["level"] == "log"
 
 
-class _FakeWS:
-    """Minimal websocket stand-in feeding scripted CDP frames."""
+@contextlib.contextmanager
+def _cdp_page(frames):
+    """A real local server standing in for a CDP page: /json listing plus its websocket."""
+    import threading
+    from http import HTTPStatus
 
-    def __init__(self, frames):
-        self.frames = list(frames)
-        self.sent = []
+    from websockets.sync.server import serve
 
-    async def send(self, data):
-        self.sent.append(data)
+    def process_request(connection, request):
+        if request.path == "/json":
+            url = f"ws://127.0.0.1:{connection.local_address[1]}/devtools/page/1"
+            return connection.respond(
+                HTTPStatus.OK, json.dumps([{"type": "page", "url": "url", "webSocketDebuggerUrl": url}])
+            )
 
-    async def recv(self):
-        import asyncio
-        if not self.frames:
-            await asyncio.sleep(3600)
-        return self.frames.pop(0)
+    def handler(ws):
+        for frame in frames:
+            ws.send(json.dumps(frame))
+        ws.wait_closed()
 
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *exc):
-        return False
-
-
-def _connectable(ws):
-    class _Conn:
-        def __init__(self, *a, **k):
-            pass
-
-        async def __aenter__(self):
-            return ws
-
-        async def __aexit__(self, *exc):
-            return False
-
-    return lambda *a, **k: _Conn()
+    with serve(handler, "127.0.0.1", 0, process_request=process_request) as server:
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        yield server.socket.getsockname()[1]
+        server.shutdown()
 
 
-def test_ev_with_console_preserves_events_on_probe_exception(monkeypatch):
+def test_ev_with_console_preserves_events_on_probe_exception():
     """A probe that throws must not discard console output captured before it."""
-    import asyncio
-    import json as _json
-    import sys
-    import types
-
     from obsidian_mobile_debug import android
 
     frames = [
-        _json.dumps({"method": "Runtime.consoleAPICalled",
-                     "params": {"type": "error", "args": [{"type": "string", "value": "diag"}]}}),
-        _json.dumps({"id": 2, "result": {"exceptionDetails": {
-            "exception": {"description": "Error: probe blew up"}}}}),
+        {"method": "Runtime.consoleAPICalled",
+         "params": {"type": "error", "args": [{"type": "string", "value": "diag"}]}},
+        {"id": 2, "result": {"exceptionDetails": {"exception": {"description": "Error: probe blew up"}}}},
     ]
-    ws = _FakeWS(frames)
-    monkeypatch.setitem(sys.modules, "websockets", types.SimpleNamespace(connect=_connectable(ws)))
-    monkeypatch.setattr(android, "discover_page_ws", lambda port: ("ws://fake", "url"))
-
     events = []
-    import pytest as _pytest
-    with _pytest.raises(RuntimeError, match="probe blew up"):
-        asyncio.run(android.ev_with_console(9333, "boom()", timeout=5, events=events))
+
+    async def run():
+        with _cdp_page(frames) as port:
+            await android.ev_with_console(port, "boom()", timeout=5, events=events)
+
+    with pytest.raises(RuntimeError, match="probe blew up"):
+        asyncio.run(run())
     assert len(events) == 1
     assert events[0]["args"] == ["diag"]
     assert events[0]["level"] == "error"
 
 
-def test_capture_console_events_collects_until_window_closes(monkeypatch):
-    import asyncio
-    import json as _json
-    import sys
-    import types
-
+def test_capture_console_events_collects_until_window_closes():
     from obsidian_mobile_debug import android
 
     frames = [
-        _json.dumps({"method": "Runtime.consoleAPICalled",
-                     "params": {"type": "log", "args": [{"type": "string", "value": "tail"}]}}),
+        {"method": "Runtime.consoleAPICalled",
+         "params": {"type": "log", "args": [{"type": "string", "value": "tail"}]}},
     ]
-    ws = _FakeWS(frames)
-    monkeypatch.setitem(sys.modules, "websockets", types.SimpleNamespace(connect=_connectable(ws)))
-    monkeypatch.setattr(android, "discover_page_ws", lambda port: ("ws://fake", "url"))
 
-    events = asyncio.run(android.capture_console_events(9333, 0.3))
-    assert [event["text"] for event in events] == ["tail"]
+    async def run():
+        with _cdp_page(frames) as port:
+            return await android.capture_console_events(port, 0.3)
 
+    assert [event["text"] for event in asyncio.run(run())] == ["tail"]
+
+
+def test_ev_ignores_proxy_environment(monkeypatch):
+    """CDP is an adb-forwarded localhost port; a proxy can't reach it."""
+    from obsidian_mobile_debug import android
+
+    for name in ("NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    for name in ("HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.setenv(name, "http://127.0.0.1:9")
+
+    async def run():
+        with _cdp_page([{"id": 1, "result": {"result": {"value": 2}}}]) as port:
+            return await android.ev(port, "1 + 1", timeout=5)
+
+    assert asyncio.run(run()) == 2
 
 
 # ---------- restore/cleanup safety against a fake phone ----------

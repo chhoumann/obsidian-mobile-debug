@@ -154,11 +154,10 @@ def cdp_forward(port: int, package: str):
 def cdp_targets(port: int) -> list[dict[str, Any]]:
     import urllib.request
 
+    # CDP is an adb-forwarded loopback port, never reachable via a proxy.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        # CDP uses an integer-selected port on loopback only.
-        return json.load(urllib.request.urlopen(  # nosec B310
-            f"http://localhost:{port}/json", timeout=10
-        ))
+        return json.load(opener.open(f"http://localhost:{port}/json", timeout=10))
     except Exception as exc:  # noqa: BLE001
         raise SystemExit(
             f"Could not read the CDP target list on localhost:{port}: {exc}\n"
@@ -175,11 +174,16 @@ def discover_page_ws(port: int) -> tuple[str, str]:
 
 
 # ---------- shared CDP eval ----------
-async def ev(port: int, expr: str, *, timeout: float = 120.0, await_promise: bool = True) -> Any:
-    import websockets
+def _cdp_connect(ws_url: str) -> Any:
+    from websockets.asyncio.client import connect
 
+    # Same loopback port as cdp_targets: never via a proxy.
+    return connect(ws_url, max_size=None, open_timeout=20, proxy=None)
+
+
+async def ev(port: int, expr: str, *, timeout: float = 120.0, await_promise: bool = True) -> Any:
     ws_url, _url = discover_page_ws(port)
-    async with websockets.connect(ws_url, max_size=None, open_timeout=20) as ws:
+    async with _cdp_connect(ws_url) as ws:
         await ws.send(json.dumps({
             "id": 1,
             "method": "Runtime.evaluate",
@@ -232,11 +236,9 @@ def _utc_now_iso() -> str:
 
 async def capture_console_events(port: int, seconds: float) -> list[dict[str, Any]]:
     """Collect Runtime.consoleAPICalled events for a fixed window (omd logs analog)."""
-    import websockets
-
     events: list[dict[str, Any]] = []
     ws_url, _url = discover_page_ws(port)
-    async with websockets.connect(ws_url, max_size=None, open_timeout=20) as ws:
+    async with _cdp_connect(ws_url) as ws:
         await ws.send(json.dumps({"id": 1, "method": "Runtime.enable"}))
         loop = asyncio.get_event_loop()
         deadline = loop.time() + seconds
@@ -268,12 +270,10 @@ async def ev_with_console(
     throws or times out - that failure evidence would otherwise be lost with
     the raised exception.
     """
-    import websockets
-
     now = _utc_now_iso
     events = events if events is not None else []
     ws_url, _url = discover_page_ws(port)
-    async with websockets.connect(ws_url, max_size=None, open_timeout=20) as ws:
+    async with _cdp_connect(ws_url) as ws:
         await ws.send(json.dumps({"id": 1, "method": "Runtime.enable"}))
         await ws.send(json.dumps({
             "id": 2,
