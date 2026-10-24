@@ -17,12 +17,12 @@ classifiers = [
     "Topic :: Software Development :: Debuggers",
 ]
 dependencies = [
-    "pymobiledevice3",
-    "websockets",
+    "pymobiledevice3>=11",
+    "websockets>=17",
 ]
 
-[project.optional-dependencies]
-dev = ["pytest"]
+[dependency-groups]
+dev = ["pytest>=9"]
 
 [project.urls]
 Homepage = "https://github.com/chhoumann/obsidian-mobile-debug"
@@ -32,11 +32,19 @@ Repository = "https://github.com/chhoumann/obsidian-mobile-debug"
 omd = "obsidian_mobile_debug.cli:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/obsidian_mobile_debug"]
+
+[tool.uv]
+exclude-newer = "7 days"
+# GHSA-6q48-6c7w-9gw2 (compromised emSign intermediates) is fixed in
+# certifi 2026.10.19, which is younger than the 7-day window. Drop the
+# per-package date once the window covers it; the constraint keeps the floor.
+exclude-newer-package = { certifi = "2026-10-21T00:00:00Z" }
+constraint-dependencies = ["certifi>=2026.10.19"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
