@@ -838,13 +838,32 @@ def configure_webview_flags(
     return list(flags)
 
 
+def own_scope_prefix(config: SetupConfig) -> list[str]:
+    """Run the emulator in its own systemd user scope when one is available.
+
+    A new session alone does not let the emulator outlive its caller: it stays
+    in the caller's cgroup, and stopping that cgroup (closing a terminal tab,
+    restarting an agent) kills every process in it. ``systemd-run --scope``
+    execs in place, so the emulator keeps this process as its parent and its
+    PID; only the cgroup changes.
+    """
+    systemd_run = shutil.which("systemd-run")
+    if platform.system() != "Linux" or not systemd_run:
+        return []
+    probe = run([systemd_run, "--user", "--scope", "--quiet", "--collect", "true"], check=False, timeout=30)
+    if probe.returncode != 0:
+        return []
+    unit = f"omd-emulator-{config.avd}-{config.console_port}"
+    return [systemd_run, "--user", "--scope", "--quiet", "--collect", f"--unit={unit}", "--"]
+
+
 def launch_emulator(config: SetupConfig, command: Sequence[str]) -> tuple[int, Path]:
     config.state_dir.mkdir(parents=True, exist_ok=True)
     log_path = config.state_dir / f"{config.avd}-emulator.log"
     log = log_path.open("ab", buffering=0)
     try:
         process = subprocess.Popen(
-            list(command),
+            [*own_scope_prefix(config), *command],
             env=config.env,
             stdin=subprocess.DEVNULL,
             stdout=log,
