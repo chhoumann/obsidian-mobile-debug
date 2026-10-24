@@ -33,7 +33,7 @@ COMMANDLINE_TOOLS_SHA1 = {
     "mac_x86_64": "112cf9618794a997ff273537d55bee02c22abffe",
     "mac_arm64": "ad03dc49bfacfd52c110b14104ea548b8a07e830",
 }
-OBSIDIAN_RELEASE_API = "https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest"
+OBSIDIAN_RELEASES_API = "https://api.github.com/repos/obsidianmd/obsidian-releases/releases?per_page=20"
 OBSIDIAN_SIGNER_SHA256 = "bd3bd52f4427b5ab7f8059d071a35e3de943c646546d32313da5f1cac254b7e4"
 WATCHDOG_MARKERS = (
     "WATCHDOG KILLING SYSTEM PROCESS",
@@ -701,10 +701,23 @@ def wait_for_stable_boot(config: SetupConfig, adb: Path, acceleration: str) -> d
     raise SetupError(f"Android did not reach a stable boot within {config.boot_timeout:.0f}s: {last}")
 
 
-def select_release_asset(payload: Mapping[str, Any]) -> ReleaseAsset:
-    candidates = [asset for asset in payload.get("assets", []) if asset.get("name", "").endswith(".apk")]
+def _release_apks(release: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    return [asset for asset in release.get("assets", []) if asset.get("name", "").endswith(".apk")]
+
+
+def select_release_asset(releases: Sequence[Mapping[str, Any]]) -> ReleaseAsset:
+    """The APK of the newest stable release; desktop-only patch releases ship none."""
+    payload = next(
+        (release for release in releases if not release.get("prerelease") and _release_apks(release)),
+        None,
+    )
+    if payload is None:
+        raise SetupError(f"None of the {len(releases)} latest Obsidian releases ships an APK")
+    candidates = _release_apks(payload)
     if len(candidates) != 1:
-        raise SetupError(f"Expected one APK in the latest Obsidian release, found {len(candidates)}")
+        raise SetupError(
+            f"Expected one APK in Obsidian release {payload.get('tag_name')}, found {len(candidates)}"
+        )
     asset = candidates[0]
     digest = str(asset.get("digest") or "")
     if not digest.startswith("sha256:") or not re.fullmatch(r"[0-9a-fA-F]{64}", digest[7:]):
@@ -719,7 +732,7 @@ def select_release_asset(payload: Mapping[str, Any]) -> ReleaseAsset:
 
 def latest_obsidian_asset() -> ReleaseAsset:
     request = urllib.request.Request(
-        OBSIDIAN_RELEASE_API,
+        OBSIDIAN_RELEASES_API,
         headers={"Accept": "application/vnd.github+json", "User-Agent": "obsidian-mobile-debug"},
     )
     # This request is fixed to the official GitHub HTTPS API endpoint.

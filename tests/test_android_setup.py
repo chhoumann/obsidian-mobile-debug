@@ -266,7 +266,7 @@ def test_select_release_asset_requires_github_digest():
             "digest": "sha256:" + "a" * 64,
         }],
     }
-    asset = android_setup.select_release_asset(payload)
+    asset = android_setup.select_release_asset([payload])
     assert asset.version == "v1.2.3"
     assert asset.sha256 == "a" * 64
 
@@ -281,7 +281,7 @@ def test_select_release_asset_rejects_missing_or_weak_digest(digest):
         }],
     }
     with pytest.raises(android_setup.SetupError, match="SHA-256"):
-        android_setup.select_release_asset(payload)
+        android_setup.select_release_asset([payload])
 
 
 def test_verify_apk_signature_requires_one_expected_v2_signer(monkeypatch, tmp_path):
@@ -552,3 +552,18 @@ def test_outdated_command_line_tools_are_replaced(monkeypatch, tmp_path):
         f"sdk-{android_setup.COMMANDLINE_TOOLS_VERSION}"
     )
 
+
+def test_obsidian_apk_comes_from_newest_stable_release_that_ships_one():
+    def release(tag, *assets, prerelease=False):
+        return {"tag_name": tag, "prerelease": prerelease, "assets": [
+            {"name": name, "browser_download_url": f"https://github.com/{name}",
+             "digest": "sha256:" + "ab" * 32}
+            for name in assets
+        ]}
+
+    asset = android_setup.select_release_asset([
+        release("v1.15.0", "Obsidian-1.15.0.apk", prerelease=True),
+        release("v1.14.5", "Obsidian-1.14.5.dmg"),
+        release("v1.14.4", "Obsidian-1.14.4.dmg", "Obsidian-1.14.4.apk"),
+    ])
+    assert (asset.version, asset.name) == ("v1.14.4", "Obsidian-1.14.4.apk")
