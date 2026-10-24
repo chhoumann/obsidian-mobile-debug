@@ -228,6 +228,7 @@ def run(
             timeout=timeout,
             input=input_text,
             text=True,
+            errors="replace",
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
