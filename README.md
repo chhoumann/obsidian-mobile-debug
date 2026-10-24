@@ -156,7 +156,10 @@ diagnosis.
 On Linux with a systemd user session, the emulator runs in its own scope
 (`omd-emulator-<avd>-<port>`), so it keeps running after the terminal or agent
 session that started setup ends. A new process session alone is not enough:
-stopping the caller's cgroup kills every process in it.
+stopping the caller's cgroup kills every process in it. The scope still ends
+with the user's systemd manager, which logind stops after the last login
+session closes unless lingering is on (`loginctl enable-linger`), as it usually
+is not for SSH-only users.
 
 `./android_teardown.sh` stops and deletes only OMD's isolated AVD. Set
 `BACKEND=container` to remove the named ReDroid container instead, while keeping

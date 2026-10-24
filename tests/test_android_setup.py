@@ -569,3 +569,13 @@ def test_obsidian_apk_comes_from_newest_stable_release_that_ships_one():
         release("v1.14.4", "Obsidian-1.14.4.dmg", "Obsidian-1.14.4.apk"),
     ])
     assert (asset.version, asset.name) == ("v1.14.4", "Obsidian-1.14.4.apk")
+
+
+def test_own_scope_prefix_falls_back_when_the_user_manager_stalls(monkeypatch, tmp_path):
+    def stalled(*_args, **_kwargs):
+        raise android_setup.SetupError("Timed out after 10s: systemd-run --user --scope true")
+
+    monkeypatch.setattr(android_setup.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(android_setup.shutil, "which", lambda _name: "/usr/bin/systemd-run")
+    monkeypatch.setattr(android_setup, "run", stalled)
+    assert android_setup.own_scope_prefix(config(tmp_path)) == []

@@ -850,7 +850,10 @@ def own_scope_prefix(config: SetupConfig) -> list[str]:
     systemd_run = shutil.which("systemd-run")
     if platform.system() != "Linux" or not systemd_run:
         return []
-    probe = run([systemd_run, "--user", "--scope", "--quiet", "--collect", "true"], check=False, timeout=30)
+    try:
+        probe = run([systemd_run, "--user", "--scope", "--quiet", "--collect", "true"], check=False, timeout=10)
+    except SetupError:
+        return []
     if probe.returncode != 0:
         return []
     unit = f"omd-emulator-{config.avd}-{config.console_port}"
