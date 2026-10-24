@@ -363,6 +363,13 @@ def ensure_sdk(config: SetupConfig) -> dict[str, Path]:
     )
     if licenses.returncode not in {0, 141}:
         raise SetupError(f"Android SDK license acceptance failed:\n{licenses.stdout.strip()}")
+    # Installing a listed package already updates it; this also covers
+    # cmdline-tools itself and packages an earlier run installed.
+    run(
+        [sdkmanager, f"--sdk_root={config.sdk_root}", "--update"],
+        env=config.env,
+        timeout=1800,
+    )
     run(
         [sdkmanager, f"--sdk_root={config.sdk_root}", *packages],
         env=config.env,
