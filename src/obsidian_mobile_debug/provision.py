@@ -199,6 +199,11 @@ EXTERNAL_VAULTS_KEY = "mobile-external-vaults"
 
 CURRENT_SELECTED_VAULT_JS = f'localStorage.getItem({json.dumps(SELECTED_VAULT_KEY)})'
 
+RELOAD_JS = "setTimeout(() => location.reload(), 300); null"
+
+# Return to the no-vault state (onboarding / vault chooser), as app.openVaultChooser does.
+CLOSE_VAULT_JS = f"localStorage.removeItem({json.dumps(SELECTED_VAULT_KEY)}); {RELOAD_JS}"
+
 # Per-vault community-plugins trust flag ("Restricted Mode" off), keyed by the
 # vault's recorded path. Obsidian mobile shows a manual Trust prompt on first
 # open of an unknown vault whose community-plugins.json lists plugins; setting

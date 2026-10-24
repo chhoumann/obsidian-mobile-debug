@@ -356,29 +356,6 @@ async def _async_value(value: Any) -> Any:
 
 
 # ---------- Android ----------
-async def _android_wait_for_vault(port: int, expected_vault: str,
-                                  timeout: float = VAULT_SWITCH_TIMEOUT) -> str | None:
-    """Poll (reconnecting each time) until the expected vault reports open."""
-    from . import android
-
-    deadline = time.monotonic() + timeout
-    attempts: list[str] = []
-    while time.monotonic() < deadline:
-        try:
-            name = await android.ev(port, "app?.vault?.getName?.() ?? null", timeout=10)
-            if name == expected_vault:
-                return name
-            attempts.append(f"open vault is {name!r}")
-        except (SystemExit, TimeoutError, RuntimeError, OSError, ConnectionError) as exc:
-            attempts.append(str(exc).split("\n")[0])
-        await asyncio.sleep(RECONNECT_POLL_SECONDS)
-    raise SystemExit(
-        f"Vault {expected_vault!r} did not open within {timeout:.0f}s.\n"
-        f"Attempts: {attempts[-5:]}\n"
-        "The app may be showing the vault chooser - check the device screen."
-    )
-
-
 async def cmd_verify_android(args: argparse.Namespace) -> int:
     from . import android
     from . import provision as prov
@@ -404,6 +381,7 @@ async def cmd_verify_android(args: argparse.Namespace) -> int:
     }
     failures: list[str] = []
     switched = False
+    original_name: str | None = None
     original_path: str | None = None
 
     with android.cdp_forward(args.port, args.bundle) as pid:
@@ -411,8 +389,11 @@ async def cmd_verify_android(args: argparse.Namespace) -> int:
         try:
             # 1. diagnose + remember the original vault for restore.
             summary["diagnose"] = {"runtime": await android.read_runtime_state(args.port, args.plugin)}
-            original_path = await android.ev(args.port, prov.CURRENT_SELECTED_VAULT_JS)
-            original_name = summary["diagnose"]["runtime"].get("vaultName")
+            original_name = await android.read_vault_name(args.port)
+            # Once Obsidian settles with no vault open, a leftover selection is
+            # one it could not open, not a vault the run started in.
+            if original_name:
+                original_path = await android.ev(args.port, prov.CURRENT_SELECTED_VAULT_JS)
             summary["diagnose"]["originalVault"] = {
                 "vaultName": original_name, "selectedVaultPath": original_path,
             }
@@ -439,11 +420,12 @@ async def cmd_verify_android(args: argparse.Namespace) -> int:
             # 3. switch into the scratch vault (absolute path form) and wait.
             # trust_plugins pre-clears the Restricted Mode prompt; restore
             # below deliberately never sets it.
-            summary["open"] = await android.ev(
+            summary["open"] = {"allFilesAccess": android.grant_all_files_access(args.bundle)}
+            summary["open"] |= await android.ev(
                 args.port, prov.open_vault_js(vault_path, trust_plugins=True)
             )
             switched = True
-            await _android_wait_for_vault(args.port, vault_name)
+            await android.wait_for_vault(args.port, vault_name)
 
             # 4-5. enable plugin, then probes with console capture on one socket.
             summary["enable"] = await android.enable_plugin(args.port, args.plugin)
@@ -488,14 +470,14 @@ async def cmd_verify_android(args: argparse.Namespace) -> int:
         except BaseException:
             summary["error"] = "transport or tool failure - see stderr"
             await _android_restore_and_cleanup(
-                args, summary, failures, switched, original_path, cleanup=False
+                args, summary, failures, switched, original_name, original_path, cleanup=False
             )
             summarize_assertions(summary, failures)
             emit_summary(summary)
             raise
 
         await _android_restore_and_cleanup(
-            args, summary, failures, switched, original_path, cleanup=args.cleanup
+            args, summary, failures, switched, original_name, original_path, cleanup=args.cleanup
         )
 
     summarize_assertions(summary, failures)
@@ -505,7 +487,7 @@ async def cmd_verify_android(args: argparse.Namespace) -> int:
 
 async def _android_restore_and_cleanup(
     args: argparse.Namespace, summary: dict[str, Any], failures: list[str],
-    switched: bool, original_path: str | None, cleanup: bool,
+    switched: bool, original_name: str | None, original_path: str | None, cleanup: bool,
 ) -> None:
     from . import android
     from . import provision as prov
@@ -514,16 +496,20 @@ async def _android_restore_and_cleanup(
         summary["restore"] = {"attempted": False, "reason": "never left the original vault"}
     elif args.keep_vault:
         summary["restore"] = {"attempted": False, "reason": "--keep-vault"}
-    elif not original_path:
+    elif original_name and not original_path:
         summary["restore"] = {"attempted": False, "reason": "no original vault path recorded"}
         failures.append("original vault was not restored")
         return
     else:
         try:
-            await android.ev(args.port, prov.open_vault_js(original_path))
-            restored_name = await _android_wait_for_vault(
-                args.port, original_path.rstrip("/").rsplit("/", 1)[-1]
-            )
+            if original_path:
+                await android.ev(args.port, prov.open_vault_js(original_path))
+                restored_name = await android.wait_for_vault(
+                    args.port, original_path.rstrip("/").rsplit("/", 1)[-1]
+                )
+            else:
+                await android.ev(args.port, prov.CLOSE_VAULT_JS)
+                restored_name = await android.wait_for_vault(args.port, None)
             summary["restore"] = {"attempted": True, "ok": True, "vaultName": restored_name}
         except (SystemExit, TimeoutError, RuntimeError, OSError, ConnectionError) as exc:
             summary["restore"] = {"attempted": True, "ok": False, "error": str(exc)}
@@ -550,5 +536,8 @@ async def _android_restore_and_cleanup(
         summary["cleanup"]["forgot"] = await android.ev(
             args.port, prov.forget_vault_js(vault_path)
         )
+        if current_name is None:
+            # The vault chooser lists the vaults known at page load.
+            await android.ev(args.port, prov.RELOAD_JS)
     elif "cleanup" not in summary:
         summary["cleanup"] = {"attempted": False, "reason": "--cleanup not requested"}

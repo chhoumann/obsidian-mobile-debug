@@ -276,7 +276,11 @@ reloads to the chooser UI. What it revealed is that the open vault is recorded i
 `mobile-external-vaults` registry. `--open` registers the scratch vault's path,
 selects it, and reloads Obsidian into it (over CDP on Android, over the Web
 Inspector on iOS). On iOS the sandbox-absolute path is derived from the
-currently-open vault, so a vault must already be open once. Without `--open` the
+currently-open vault, so a vault must already be open once. On Android a fresh
+install works too: Obsidian only opens a vault in shared storage with All files
+access, so `--open` grants it over adb (`appops set --uid <pkg>
+MANAGE_EXTERNAL_STORAGE allow`) when it is missing, reports `allFilesAccess`,
+and waits until the vault is actually open. Without `--open` the
 command prints the manual step (vault switcher -> Manage vaults). After opening a
 vault that carries a plugin, run `omd <platform> reload --plugin <id>` to
 instantiate it (`reload` turns Restricted Mode off on both platforms).
@@ -325,7 +329,9 @@ dropping its trust flag. Right before deleting, cleanup re-reads the vault
 path Obsidian has selected and skips the delete (exit `2`) if it is still the
 scratch vault. `--cleanup` refuses to start when Obsidian is already in the
 scratch vault, since there would be no other vault to restore to: open another
-vault first, or use `--keep-vault`.
+vault first, or use `--keep-vault`. On Android a run can start with no vault
+open (a fresh install on onboarding): it grants All files access like
+`provision --open`, and restoring returns Obsidian to the no-vault screen.
 
 Exit codes: `0` when every assertion passed, `2` when an assertion failed (a
 probe returned `ok:false` or threw, the plugin did not instantiate, artifact

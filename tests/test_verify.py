@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from obsidian_mobile_debug import verify
+from obsidian_mobile_debug import android, verify
 from obsidian_mobile_debug.android import format_cdp_console_event
 from obsidian_mobile_debug.cli import build_parser
 
@@ -247,6 +247,37 @@ def test_android_verify_cleanup_restores_then_deletes_scratch(monkeypatch, capsy
     assert phone.dirs == {notes}
 
 
+def test_android_verify_from_a_fresh_install_returns_to_no_vault(monkeypatch, capsys):
+    phone = FakePhone(None, set(), all_files_access=False)
+    fake_android(monkeypatch, phone)
+    args = parse("android", "verify", "--plugin", "quickadd", "--cleanup")
+    assert outcome(verify.cmd_verify_android(args)) == 0
+    assert phone.vault_name is None and phone.selected is None
+    assert phone.dirs == set()
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["open"]["allFilesAccess"] == "granted"
+    assert summary["restore"] == {"attempted": True, "ok": True, "vaultName": None}
+
+
+def test_android_verify_ignores_a_selection_obsidian_could_not_open(monkeypatch, capsys):
+    phone = FakePhone(ANDROID_SCRATCH_DIR, {ANDROID_SCRATCH_DIR}, all_files_access=False)
+    fake_android(monkeypatch, phone)
+    args = parse("android", "verify", "--plugin", "quickadd", "--cleanup")
+    assert outcome(verify.cmd_verify_android(args)) == 0
+    assert phone.selected is None
+    assert phone.dirs == set()
+
+
+def test_android_verify_cleanup_refuses_while_scratch_is_still_loading(monkeypatch, capsys):
+    monkeypatch.setattr(android, "RECONNECT_POLL_SECONDS", 0)
+    phone = FakePhone(ANDROID_SCRATCH_DIR, {ANDROID_SCRATCH_DIR}, starting=True)
+    fake_android(monkeypatch, phone)
+    args = parse("android", "verify", "--plugin", "quickadd", "--cleanup")
+    result = outcome(verify.cmd_verify_android(args))
+    assert ANDROID_SCRATCH_DIR in phone.dirs
+    assert isinstance(result, SystemExit) and "--keep-vault" in str(result)
+
+
 def test_android_verify_cleanup_refuses_when_started_in_scratch(monkeypatch, capsys):
     phone = FakePhone(ANDROID_SCRATCH_DIR, {ANDROID_SCRATCH_DIR})
     fake_android(monkeypatch, phone)
@@ -263,7 +294,7 @@ def test_android_cleanup_never_deletes_the_open_vault(monkeypatch):
     summary = {"vault": {"name": SCRATCH, "path": ANDROID_SCRATCH_DIR}}
     failures = []
     outcome(verify._android_restore_and_cleanup(
-        args, summary, failures, False, None, cleanup=True
+        args, summary, failures, False, None, None, cleanup=True
     ))
     assert ANDROID_SCRATCH_DIR in phone.dirs
     assert summary["cleanup"]["attempted"] is False

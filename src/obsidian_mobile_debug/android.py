@@ -28,6 +28,7 @@ import posixpath
 import re
 import subprocess
 import sys
+import time
 from datetime import UTC
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,21 @@ from typing import Any
 DEFAULT_PACKAGE = "md.obsidian"
 DEFAULT_CDP_PORT = 9333
 SAFE_VAULT_TOKENS = ("test", "scratch", "debug", "sandbox")
+# Obsidian defines the `app` global only once a vault is open. Without it the
+# page is either still starting or has settled on onboarding / the vault
+# chooser, which are the only states that prove no vault is open.
+VAULT_STATE_JS = """(() => {
+    if (window.app) return {settled: true, name: window.app.vault?.getName?.() ?? null};
+    const screen = document.querySelector(".mobile-onboarding-screen, .mobile-vault-chooser-screen");
+    return {settled: Boolean(screen), name: null};
+})()"""
+NO_VAULT_MESSAGE = (
+    "Obsidian has no vault open (onboarding or vault chooser). "
+    "`omd android provision --open` creates and opens a scratch vault."
+)
+ALL_FILES_ACCESS_OP = "MANAGE_EXTERNAL_STORAGE"
+VAULT_SWITCH_TIMEOUT = 90.0
+RECONNECT_POLL_SECONDS = 2.0
 
 
 # ---------- pure helpers (no device, safe to import/unit-test) ----------
@@ -199,6 +215,8 @@ async def ev(port: int, expr: str, *, timeout: float = 120.0, await_promise: boo
             response = json.loads(await asyncio.wait_for(ws.recv(), timeout))
             if response.get("id") != 1:
                 continue
+            if "error" in response:
+                raise RuntimeError(f"CDP error: {response['error'].get('message')}")
             result = response.get("result", {})
             if "exceptionDetails" in result:
                 exc = result["exceptionDetails"]
@@ -299,6 +317,8 @@ async def ev_with_console(
                 continue
             if response.get("id") != 2:
                 continue
+            if "error" in response:
+                raise RuntimeError(f"CDP error: {response['error'].get('message')}")
             result = response.get("result", {})
             if "exceptionDetails" in result:
                 exc = result["exceptionDetails"]
@@ -321,7 +341,31 @@ async def ev_with_console(
     return value, events
 
 
+def _transient_cdp_errors() -> tuple[type[BaseException], ...]:
+    """What a CDP read raises while Obsidian reloads; worth retrying."""
+    from websockets.exceptions import WebSocketException
+
+    return (SystemExit, TimeoutError, RuntimeError, OSError, ConnectionError, WebSocketException)
+
+
+async def read_vault_name(port: int, timeout: float = VAULT_SWITCH_TIMEOUT) -> str | None:
+    """Name of the open vault, or None once Obsidian settles with no vault open."""
+    deadline = time.monotonic() + timeout
+    last = "no response"
+    while time.monotonic() < deadline:
+        try:
+            state = await ev(port, VAULT_STATE_JS, timeout=10)
+            if state["settled"]:
+                return state["name"]
+            last = "Obsidian is still starting"
+        except _transient_cdp_errors() as exc:
+            last = str(exc).split("\n")[0]
+        await asyncio.sleep(RECONNECT_POLL_SECONDS)
+    raise SystemExit(f"Obsidian did not finish starting within {timeout:.0f}s ({last}).")
+
+
 async def read_runtime_state(port: int, plugin: str | None) -> dict[str, Any]:
+    await read_vault_name(port)
     plugin_expr = "null" if not plugin else f"""(() => {{
         const id = {js(plugin)};
         const p = app?.plugins?.plugins?.[id];
@@ -333,7 +377,8 @@ async def read_runtime_state(port: int, plugin: str | None) -> dict[str, Any]:
             loadedVersion: p?.manifest?.version ?? null,
         }};
     }})()"""
-    return await ev(port, f"""(() => ({{
+    return await ev(port, f"""(() => {{ const app = window.app; return {{
+        vaultOpen: Boolean(app),
         vaultName: app?.vault?.getName?.() ?? null,
         vaultBasePath: app?.vault?.adapter?.basePath ?? app?.vault?.adapter?.getBasePath?.() ?? null,
         pluginsEnabled: Boolean(app?.plugins?.isEnabled?.()),
@@ -341,15 +386,55 @@ async def read_runtime_state(port: int, plugin: str | None) -> dict[str, Any]:
         installedPluginCount: Object.keys(app?.plugins?.plugins ?? {{}}).length,
         enabledPluginCount: Array.from(app?.plugins?.enabledPlugins ?? []).length,
         plugin: {plugin_expr},
-    }}))()""")
+    }}; }})()""")
 
 
 async def read_open_vault(port: int) -> tuple[str | None, str | None]:
     """Name and recorded (localStorage) path of the vault Obsidian has open."""
     from . import provision as prov
 
-    name = await ev(port, "app?.vault?.getName?.() ?? null", timeout=10)
+    name = await read_vault_name(port)
     return name, await ev(port, prov.CURRENT_SELECTED_VAULT_JS, timeout=10)
+
+
+async def wait_for_vault(port: int, expected_vault: str | None,
+                         timeout: float = VAULT_SWITCH_TIMEOUT) -> str | None:
+    """Poll (reconnecting each time) until ``expected_vault`` is open; None means no vault."""
+    deadline = time.monotonic() + timeout
+    attempts: list[str] = []
+    while time.monotonic() < deadline:
+        try:
+            state = await ev(port, VAULT_STATE_JS, timeout=10)
+            if state["settled"] and state["name"] == expected_vault:
+                return expected_vault
+            attempts.append(
+                f"open vault is {state['name']!r}" if state["settled"] else "Obsidian is starting"
+            )
+        except _transient_cdp_errors() as exc:
+            attempts.append(str(exc).split("\n")[0])
+        await asyncio.sleep(RECONNECT_POLL_SECONDS)
+    target = f"Vault {expected_vault!r} did not open" if expected_vault else "Obsidian did not close its vault"
+    raise SystemExit(
+        f"{target} within {timeout:.0f}s.\n"
+        f"Attempts: {attempts[-5:]}\n"
+        "The app may be showing onboarding or the vault chooser - check the device screen."
+    )
+
+
+def grant_all_files_access(package: str) -> str:
+    """Allow Obsidian to open vaults in shared storage, reporting what changed.
+
+    Android 11+ gates /storage/emulated/0 behind All files access. Without it
+    Obsidian ignores the selected vault and stays on onboarding or the vault
+    chooser. Older Android has no such app-op; that reports "unavailable".
+    """
+    mode = adb_out(["shell", "appops", "get", "--uid", package, ALL_FILES_ACCESS_OP], check=False)
+    if f"{ALL_FILES_ACCESS_OP}: allow" in mode:
+        return "already-granted"
+    granted = run_adb(
+        ["shell", "appops", "set", "--uid", package, ALL_FILES_ACCESS_OP, "allow"], check=False
+    )
+    return "granted" if granted.returncode == 0 else "unavailable"
 
 
 async def enable_plugin(port: int, plugin: str) -> dict[str, Any]:
@@ -408,13 +493,17 @@ async def cmd_diagnose(args: argparse.Namespace) -> int:
     with cdp_forward(args.port, args.bundle) as pid:
         state = await read_runtime_state(args.port, args.plugin)
     print(json.dumps({"pid": pid, "cdpPort": args.port, "runtime": state}, indent=2, ensure_ascii=False))
+    if not state.get("vaultOpen"):
+        print(NO_VAULT_MESSAGE, file=sys.stderr)
     return 0
 
 
 async def cmd_reload(args: argparse.Namespace) -> int:
     with cdp_forward(args.port, args.bundle):
-        vault_name = await ev(args.port, "app?.vault?.getName?.() ?? null")
-        guard_real_vault(vault_name or "", args, "reload")
+        vault_name = await read_vault_name(args.port)
+        if vault_name is None:
+            raise SystemExit(NO_VAULT_MESSAGE)
+        guard_real_vault(vault_name, args, "reload")
         result = await enable_plugin(args.port, args.plugin)
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0
@@ -532,9 +621,11 @@ async def cmd_provision(args: argparse.Namespace) -> int:
     opened: dict[str, Any] | None = None
     if args.open:
         with cdp_forward(args.port, args.bundle):
-            opened = await ev(
+            opened = {"allFilesAccess": grant_all_files_access(args.bundle)}
+            opened |= await ev(
                 args.port, prov.open_vault_js(vault_path, trust_plugins=bool(args.plugin))
             )
+            await wait_for_vault(args.port, vault_name)
 
     report = {
         "action": "provision",
