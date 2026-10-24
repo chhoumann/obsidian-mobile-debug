@@ -262,32 +262,23 @@ def test_cmd_provision_remove_refuses_real_vault(monkeypatch):
         _run_provision(monkeypatch, args, fake)
 
 
-def test_cmd_provision_open_switches_vault_over_cdp(monkeypatch, capsys):
-    import contextlib
-
-    fake = _FakeAdb(existing_listing="")
-    evaled: list[str] = []
-
-    @contextlib.contextmanager
-    def fake_forward(port, package):
-        yield 4321
-
-    async def fake_ev(port, expr, **kwargs):
-        evaled.append(expr)
-        return {"opened": "/sdcard/Documents/omd-scratch"}
-
-    monkeypatch.setattr(android, "cdp_forward", fake_forward)
-    monkeypatch.setattr(android, "ev", fake_ev)
-    args = argparse.Namespace(
-        vault="omd-scratch", vault_root="/sdcard/Documents", plugin=None, repo=None,
-        main=None, manifest=None, styles=None, data=None, remove=False, open=True,
-        confirm_real_vault=False, test_vault=None, port=9333, bundle="md.obsidian",
-    )
-    assert _run_provision(monkeypatch, args, fake) == 0
+def test_cmd_provision_open_gets_a_fresh_install_into_the_vault(monkeypatch, capsys):
+    phone = FakePhone(None, set(), all_files_access=False)
+    fake_android(monkeypatch, phone)
+    args = build_parser().parse_args(["android", "provision", "--open", "--vault", SCRATCH])
+    assert outcome(android.cmd_provision(args)) == 0
+    assert phone.vault_name == SCRATCH
     report = json.loads(capsys.readouterr().out)
-    assert report["opened"] == {"opened": "/sdcard/Documents/omd-scratch"}
-    # The open eval targets the provisioned vault path via localStorage + reload.
-    assert any("mobile-selected-vault" in expr and "location.reload()" in expr for expr in evaled)
+    assert report["opened"]["allFilesAccess"] == "granted"
+    assert report["opened"]["opened"] == ANDROID_SCRATCH_DIR
+
+
+def test_cmd_provision_open_keeps_existing_all_files_access(monkeypatch, capsys):
+    phone = FakePhone(None, set())
+    fake_android(monkeypatch, phone)
+    args = build_parser().parse_args(["android", "provision", "--open", "--vault", SCRATCH])
+    assert outcome(android.cmd_provision(args)) == 0
+    assert json.loads(capsys.readouterr().out)["opened"]["allFilesAccess"] == "already-granted"
 
 
 def test_cmd_provision_refuses_real_vault_without_confirm(monkeypatch):

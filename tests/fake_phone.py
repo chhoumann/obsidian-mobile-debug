@@ -1,40 +1,51 @@
 """A fake device running Obsidian, for vault-deletion safety tests.
 
-It models the two facts deletion safety depends on: which vault path Obsidian
-has selected (localStorage) and which vault dirs exist on disk. The command
-under test runs for real against it.
+It models the facts deletion safety depends on: which vault path Obsidian
+has selected (localStorage) and which vault dirs exist on disk. On Android it
+also models All files access: without it Obsidian cannot open a selected
+shared-storage vault and stays on onboarding. The command under test runs for
+real against it.
 """
 import contextlib
 import json
 import re
+import subprocess
 
+from obsidian_mobile_debug import android
 from obsidian_mobile_debug import provision as prov
 
 SCRATCH = "quickadd-omd-scratch"
 IOS_SCRATCH_DIR = f"/Documents/{SCRATCH}"
 ANDROID_ROOT = "/storage/emulated/0/Documents"
 ANDROID_SCRATCH_DIR = f"{ANDROID_ROOT}/{SCRATCH}"
-ANDROID_NAME_JS = "app?.vault?.getName?.() ?? null"
 
 
 class FakePhone:
-    def __init__(self, selected, dirs, loaded=None):
+    def __init__(self, selected, dirs, loaded=None, all_files_access=True):
         self.selected = selected
         self.dirs = set(dirs)
         # A vault still loaded after its localStorage selection was cleared.
         self.loaded = loaded
+        self.all_files_access = all_files_access
 
     @property
     def vault_name(self):
         if self.loaded:
             return self.loaded
-        return self.selected.rstrip("/").rsplit("/", 1)[-1] if self.selected else None
+        if not self.selected or not self.all_files_access:
+            return None
+        return self.selected.rstrip("/").rsplit("/", 1)[-1]
 
     def ev(self, expr):
         if expr == prov.CURRENT_SELECTED_VAULT_JS:
             return self.selected
-        if expr == ANDROID_NAME_JS:
+        if expr == android.VAULT_NAME_JS:
             return self.vault_name
+        if expr == prov.CLOSE_VAULT_JS:
+            self.selected = None
+            return None
+        if expr == prov.RELOAD_JS:
+            return None
         if "location.reload" in expr:  # open_vault_js: select the path and reload
             self.selected = json.loads(re.search(r'const p = ("[^"]*");', expr).group(1))
             return {"opened": self.selected}
@@ -107,8 +118,6 @@ def fake_ios(monkeypatch, phone):
 
 
 def fake_android(monkeypatch, phone):
-    from obsidian_mobile_debug import android
-
     @contextlib.contextmanager
     def cdp_forward(_port, _package):
         yield 4242
@@ -128,11 +137,18 @@ def fake_android(monkeypatch, phone):
     def adb_out(args, *, check=True):
         if args[:3] == ["shell", "ls", "-d"]:
             return args[3] if args[3] in phone.dirs else ""
+        if args[:3] == ["shell", "appops", "get"]:
+            return f"Uid mode: {android.ALL_FILES_ACCESS_OP}: " + (
+                "allow" if phone.all_files_access else "default"
+            )
         return ""
 
     def run_adb(args, *, check=True):
         if args[:3] == ["shell", "rm", "-rf"]:
             phone.dirs.discard(args[3])
+        if args[:3] == ["shell", "appops", "set"]:
+            phone.all_files_access = True
+        return subprocess.CompletedProcess(args, 0, "", "")
 
     def write_device_file(path, _content):
         phone.dirs.add(path.split("/.obsidian/")[0])
