@@ -966,32 +966,35 @@ def install_and_launch(
     raise SetupError("Obsidian launched but did not expose a WebView DevTools socket within 300s")
 
 
-def sandboxed_renderer_pid(services: str, bundle: str) -> int | None:
-    """PID of the isolated WebView renderer process ``bundle`` has bound, if any.
+def sandboxed_renderer_pid(services: str, bundle: str, app_uid: int) -> int | None:
+    """PID of the isolated WebView renderer process the app has bound, if any.
 
     Reads ``dumpsys activity services``: the app's SandboxedProcessService
-    record names its hosting process, whose ``/u<user>a<app>i<n>`` suffix marks
-    an isolated UID. This holds on every Android release, unlike the
-    "Multiprocess enabled" line ``dumpsys webviewupdate`` dropped in Android 15.
+    record names its hosting process, and the ``/u<user>a<appId>i<n>`` suffix
+    marks an isolated UID started for exactly this app. This holds on every
+    Android release, unlike the "Multiprocess enabled" line ``dumpsys
+    webviewupdate`` dropped in Android 15.
     """
-    for record in services.split("* ServiceRecord{")[1:]:
-        header = record.split("\n", 1)[0]
-        if f" {bundle}/org.chromium.content.app.SandboxedProcessService" not in header:
-            continue
-        match = re.search(r"^\s*app=ProcessRecord\{\S+ (\d+):\S*/u\d+(?:a\d+)?i\d+\}", record, re.MULTILINE)
-        if match:
+    user, app_id = divmod(app_uid, 100_000)
+    header = f" u{user} {bundle}/org.chromium.content.app.SandboxedProcessService"
+    renderer = re.compile(rf"^\s*app=ProcessRecord\{{\S+ (\d+):\S*/u{user}a{app_id - 10_000}i\d+\}}", re.MULTILINE)
+    # Every record starts with a "* ServiceRecord{" or "* Destroy ServiceRecord{" line.
+    for record in re.split(r"^\s*\*[^\n{]*ServiceRecord\{", services, flags=re.MULTILINE)[1:]:
+        if header in record.split("\n", 1)[0] and (match := renderer.search(record)):
             return int(match.group(1))
     return None
 
 
-def wait_for_sandboxed_renderer(config: SetupConfig, adb: Path, timeout: float = 120) -> int:
+def wait_for_sandboxed_renderer(
+    config: SetupConfig, adb: Path, app_uid: int, timeout: float = 120,
+) -> int:
     deadline = time.monotonic() + timeout
     while True:
         services = _adb_text(
             adb, config.serial, "shell", "dumpsys", "activity", "services", "SandboxedProcessService",
             check=False, timeout=60,
         )
-        pid = sandboxed_renderer_pid(services, config.bundle)
+        pid = sandboxed_renderer_pid(services, config.bundle, app_uid)
         if pid is not None:
             return pid
         if time.monotonic() > deadline:
@@ -1024,7 +1027,7 @@ def verify_android_sandbox(
             "Obsidian did not run under its isolated Android application UID: "
             f"package={package_uid}, process={process_uid}"
         )
-    renderer_pid = wait_for_sandboxed_renderer(config, adb)
+    renderer_pid = wait_for_sandboxed_renderer(config, adb, package_uid)
     webview = _adb_text(
         adb, config.serial, "shell", "dumpsys", "webviewupdate", timeout=120
     )
