@@ -1592,7 +1592,7 @@ wheels = [
 
 [[package]]
 name = "pymobiledevice3"
-version = "11.33.1"
+version = "11.34.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "asgiwebdav" },
@@ -1642,9 +1642,9 @@ dependencies = [
     { name = "uvicorn" },
     { name = "wsproto" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/90/87/fbffc28aa06320ea5629838f98031b59608d24b6ffc9a3be5da461d47d2f/pymobiledevice3-11.33.1.tar.gz", hash = "sha256:0808ec9742824c01710f3b9f7146e0457a5d51d487a4c0bf08f8c2880d9738b7", size = 1681767, upload-time = "2026-10-16T18:42:29.308Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fb/f9/f05dfe92560061a11345f0e0d2781d72ef24035c2822b656596282a6e82a/pymobiledevice3-11.34.0.tar.gz", hash = "sha256:bfd3078f697c704eee761ed6b278da01d3c12f7e1bb27dc4cf3098424bd7d54d", size = 1682073, upload-time = "2026-10-17T09:56:25.137Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/36/70/448e3fbbc798da1469c2e9da9d6f866aa941372ee0669b4bb0f665ff86ab/pymobiledevice3-11.33.1-py3-none-any.whl", hash = "sha256:3fb3a8f4d5b7c5ffea7008807f34fdfb30793c6138095709e3d883b5288cb94d", size = 1393466, upload-time = "2026-10-16T18:42:27.682Z" },
+    { url = "https://files.pythonhosted.org/packages/99/97/547a98d04d1be657704c2322b1eb0b46663efb8b71658d82f6b24c451d6b/pymobiledevice3-11.34.0-py3-none-any.whl", hash = "sha256:c9eada049f4ee47f23802155624b833c775fafbdafc17ec606cc0380d0d075f7", size = 1393709, upload-time = "2026-10-17T09:56:22.578Z" },
 ]
 
 [[package]]
