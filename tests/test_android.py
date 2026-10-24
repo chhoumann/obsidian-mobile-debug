@@ -1,5 +1,6 @@
 """Android pure helpers: adb command construction, path/vault logic, guards."""
 import argparse
+import asyncio
 import json
 
 import pytest
@@ -290,3 +291,44 @@ def test_cmd_provision_refuses_real_vault_without_confirm(monkeypatch):
     )
     with pytest.raises(SystemExit):
         _run_provision(monkeypatch, args, fake)
+
+
+class _FakeSocket:
+    def __init__(self, responses):
+        self.responses = list(responses)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_exc):
+        return False
+
+    async def send(self, _message):
+        pass
+
+    async def recv(self):
+        return json.dumps(self.responses.pop(0))
+
+
+def test_ev_raises_on_a_cdp_protocol_error(monkeypatch):
+    error = {"id": 1, "error": {"code": -32000, "message": "Execution context was destroyed."}}
+    monkeypatch.setattr(android, "discover_page_ws", lambda _port: ("ws://x", ""))
+    monkeypatch.setattr(android, "_cdp_connect", lambda _url: _FakeSocket([error]))
+    with pytest.raises(RuntimeError, match="Execution context was destroyed"):
+        asyncio.run(android.ev(9333, "1"))
+
+
+def test_wait_for_vault_retries_a_websocket_closed_by_the_reload(monkeypatch):
+    from websockets.exceptions import ConnectionClosedError
+
+    responses = [ConnectionClosedError(None, None), {"settled": True, "name": "omd-scratch"}]
+
+    async def ev(_port, _expr, **_kwargs):
+        response = responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    monkeypatch.setattr(android, "ev", ev)
+    monkeypatch.setattr(android, "RECONNECT_POLL_SECONDS", 0)
+    assert asyncio.run(android.wait_for_vault(9333, "omd-scratch")) == "omd-scratch"

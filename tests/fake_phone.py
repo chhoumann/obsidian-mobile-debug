@@ -2,9 +2,10 @@
 
 It models the facts deletion safety depends on: which vault path Obsidian
 has selected (localStorage) and which vault dirs exist on disk. On Android it
-also models All files access: without it Obsidian cannot open a selected
-shared-storage vault and stays on onboarding. The command under test runs for
-real against it.
+also models All files access (without it Obsidian cannot open a selected
+shared-storage vault and stays on onboarding) and a vault still loading, when
+no vault is open yet but Obsidian has not settled either. The command under
+test runs for real against it.
 """
 import contextlib
 import json
@@ -21,12 +22,14 @@ ANDROID_SCRATCH_DIR = f"{ANDROID_ROOT}/{SCRATCH}"
 
 
 class FakePhone:
-    def __init__(self, selected, dirs, loaded=None, all_files_access=True):
+    def __init__(self, selected, dirs, loaded=None, all_files_access=True, starting=False):
         self.selected = selected
         self.dirs = set(dirs)
         # A vault still loaded after its localStorage selection was cleared.
         self.loaded = loaded
         self.all_files_access = all_files_access
+        # Settles on the first state read after it was observed starting.
+        self.starting = starting
 
     @property
     def vault_name(self):
@@ -39,8 +42,11 @@ class FakePhone:
     def ev(self, expr):
         if expr == prov.CURRENT_SELECTED_VAULT_JS:
             return self.selected
-        if expr == android.VAULT_NAME_JS:
-            return self.vault_name
+        if expr == android.VAULT_STATE_JS:
+            if self.starting:
+                self.starting = False
+                return {"settled": False, "name": None}
+            return {"settled": True, "name": self.vault_name}
         if expr == prov.CLOSE_VAULT_JS:
             self.selected = None
             return None

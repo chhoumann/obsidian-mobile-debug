@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from obsidian_mobile_debug import verify
+from obsidian_mobile_debug import android, verify
 from obsidian_mobile_debug.android import format_cdp_console_event
 from obsidian_mobile_debug.cli import build_parser
 
@@ -266,6 +266,16 @@ def test_android_verify_ignores_a_selection_obsidian_could_not_open(monkeypatch,
     assert outcome(verify.cmd_verify_android(args)) == 0
     assert phone.selected is None
     assert phone.dirs == set()
+
+
+def test_android_verify_cleanup_refuses_while_scratch_is_still_loading(monkeypatch, capsys):
+    monkeypatch.setattr(android, "RECONNECT_POLL_SECONDS", 0)
+    phone = FakePhone(ANDROID_SCRATCH_DIR, {ANDROID_SCRATCH_DIR}, starting=True)
+    fake_android(monkeypatch, phone)
+    args = parse("android", "verify", "--plugin", "quickadd", "--cleanup")
+    result = outcome(verify.cmd_verify_android(args))
+    assert ANDROID_SCRATCH_DIR in phone.dirs
+    assert isinstance(result, SystemExit) and "--keep-vault" in str(result)
 
 
 def test_android_verify_cleanup_refuses_when_started_in_scratch(monkeypatch, capsys):

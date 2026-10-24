@@ -389,9 +389,9 @@ async def cmd_verify_android(args: argparse.Namespace) -> int:
         try:
             # 1. diagnose + remember the original vault for restore.
             summary["diagnose"] = {"runtime": await android.read_runtime_state(args.port, args.plugin)}
-            original_name = summary["diagnose"]["runtime"].get("vaultName")
-            # With no vault open, a leftover selection is one Obsidian could
-            # not open, not a vault the run started in.
+            original_name = await android.read_vault_name(args.port)
+            # Once Obsidian settles with no vault open, a leftover selection is
+            # one it could not open, not a vault the run started in.
             if original_name:
                 original_path = await android.ev(args.port, prov.CURRENT_SELECTED_VAULT_JS)
             summary["diagnose"]["originalVault"] = {

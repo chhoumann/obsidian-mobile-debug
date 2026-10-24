@@ -36,9 +36,14 @@ from typing import Any
 DEFAULT_PACKAGE = "md.obsidian"
 DEFAULT_CDP_PORT = 9333
 SAFE_VAULT_TOKENS = ("test", "scratch", "debug", "sandbox")
-# Obsidian defines the `app` global only once a vault is open; before that
-# (onboarding, vault chooser) a bare `app` reference throws.
-VAULT_NAME_JS = "window.app?.vault?.getName?.() ?? null"
+# Obsidian defines the `app` global only once a vault is open. Without it the
+# page is either still starting or has settled on onboarding / the vault
+# chooser, which are the only states that prove no vault is open.
+VAULT_STATE_JS = """(() => {
+    if (window.app) return {settled: true, name: window.app.vault?.getName?.() ?? null};
+    const screen = document.querySelector(".mobile-onboarding-screen, .mobile-vault-chooser-screen");
+    return {settled: Boolean(screen), name: null};
+})()"""
 NO_VAULT_MESSAGE = (
     "Obsidian has no vault open (onboarding or vault chooser). "
     "`omd android provision --open` creates and opens a scratch vault."
@@ -210,6 +215,8 @@ async def ev(port: int, expr: str, *, timeout: float = 120.0, await_promise: boo
             response = json.loads(await asyncio.wait_for(ws.recv(), timeout))
             if response.get("id") != 1:
                 continue
+            if "error" in response:
+                raise RuntimeError(f"CDP error: {response['error'].get('message')}")
             result = response.get("result", {})
             if "exceptionDetails" in result:
                 exc = result["exceptionDetails"]
@@ -310,6 +317,8 @@ async def ev_with_console(
                 continue
             if response.get("id") != 2:
                 continue
+            if "error" in response:
+                raise RuntimeError(f"CDP error: {response['error'].get('message')}")
             result = response.get("result", {})
             if "exceptionDetails" in result:
                 exc = result["exceptionDetails"]
@@ -332,7 +341,31 @@ async def ev_with_console(
     return value, events
 
 
+def _transient_cdp_errors() -> tuple[type[BaseException], ...]:
+    """What a CDP read raises while Obsidian reloads; worth retrying."""
+    from websockets.exceptions import WebSocketException
+
+    return (SystemExit, TimeoutError, RuntimeError, OSError, ConnectionError, WebSocketException)
+
+
+async def read_vault_name(port: int, timeout: float = VAULT_SWITCH_TIMEOUT) -> str | None:
+    """Name of the open vault, or None once Obsidian settles with no vault open."""
+    deadline = time.monotonic() + timeout
+    last = "no response"
+    while time.monotonic() < deadline:
+        try:
+            state = await ev(port, VAULT_STATE_JS, timeout=10)
+            if state["settled"]:
+                return state["name"]
+            last = "Obsidian is still starting"
+        except _transient_cdp_errors() as exc:
+            last = str(exc).split("\n")[0]
+        await asyncio.sleep(RECONNECT_POLL_SECONDS)
+    raise SystemExit(f"Obsidian did not finish starting within {timeout:.0f}s ({last}).")
+
+
 async def read_runtime_state(port: int, plugin: str | None) -> dict[str, Any]:
+    await read_vault_name(port)
     plugin_expr = "null" if not plugin else f"""(() => {{
         const id = {js(plugin)};
         const p = app?.plugins?.plugins?.[id];
@@ -360,7 +393,7 @@ async def read_open_vault(port: int) -> tuple[str | None, str | None]:
     """Name and recorded (localStorage) path of the vault Obsidian has open."""
     from . import provision as prov
 
-    name = await ev(port, VAULT_NAME_JS, timeout=10)
+    name = await read_vault_name(port)
     return name, await ev(port, prov.CURRENT_SELECTED_VAULT_JS, timeout=10)
 
 
@@ -371,11 +404,13 @@ async def wait_for_vault(port: int, expected_vault: str | None,
     attempts: list[str] = []
     while time.monotonic() < deadline:
         try:
-            name = await ev(port, VAULT_NAME_JS, timeout=10)
-            if name == expected_vault:
-                return name
-            attempts.append(f"open vault is {name!r}")
-        except (SystemExit, TimeoutError, RuntimeError, OSError, ConnectionError) as exc:
+            state = await ev(port, VAULT_STATE_JS, timeout=10)
+            if state["settled"] and state["name"] == expected_vault:
+                return expected_vault
+            attempts.append(
+                f"open vault is {state['name']!r}" if state["settled"] else "Obsidian is starting"
+            )
+        except _transient_cdp_errors() as exc:
             attempts.append(str(exc).split("\n")[0])
         await asyncio.sleep(RECONNECT_POLL_SECONDS)
     target = f"Vault {expected_vault!r} did not open" if expected_vault else "Obsidian did not close its vault"
@@ -465,7 +500,7 @@ async def cmd_diagnose(args: argparse.Namespace) -> int:
 
 async def cmd_reload(args: argparse.Namespace) -> int:
     with cdp_forward(args.port, args.bundle):
-        vault_name = await ev(args.port, VAULT_NAME_JS)
+        vault_name = await read_vault_name(args.port)
         if vault_name is None:
             raise SystemExit(NO_VAULT_MESSAGE)
         guard_real_vault(vault_name, args, "reload")
