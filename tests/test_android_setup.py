@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import re
 import subprocess
 import sys
 import zipfile
@@ -123,18 +124,68 @@ def test_container_config_uses_loopback_serial(monkeypatch, tmp_path):
 @pytest.mark.parametrize("uid_field", ["userId", "appId"])
 def test_verify_android_sandbox_accepts_package_uid_forms(monkeypatch, tmp_path, uid_field):
     responses = iter([
-        f"Package [md.obsidian]\n  {uid_field}=10123",
-        "Name:\tmd.obsidian\nUid:\t10123\t10123\t10123\t10123",
-        (
-            "Multiprocess enabled: true\n"
-            "Current WebView package (name, version): (com.android.webview, 125.0.1)"
-        ),
+        f"Package [md.obsidian]\n  {uid_field}=10209",
+        "Name:\tmd.obsidian\nUid:\t10209\t10209\t10209\t10209",
+        API_35_SANDBOXED_SERVICES,
+        "Current WebView package (name, version): (com.google.android.webview, 124.0.6367.219)",
     ])
     monkeypatch.setattr(android_setup, "_adb_text", lambda *_args, **_kwargs: next(responses))
     result = android_setup.verify_android_sandbox(config(tmp_path), Path("/adb"), 42)
-    assert result["packageUid"] == 10123
-    assert result["processUid"] == 10123
-    assert result["webviewMultiprocess"] is True
+    assert result["packageUid"] == 10209
+    assert result["processUid"] == 10209
+    assert result["webviewRendererPid"] == 3331
+
+
+# `dumpsys activity services SandboxedProcessService` from an API 35 emulator,
+# trimmed: another app's renderer, then Obsidian's.
+API_35_SANDBOXED_SERVICES = """\
+ACTIVITY MANAGER SERVICES (dumpsys activity services)
+  User 0 active services:
+  * ServiceRecord{1f26390 u0 com.google.android.googlequicksearchbox/org.chromium.content.app.SandboxedProcessService0:0 c:com.google.android.googlequicksearchbox}
+    intent={cmp=com.google.android.googlequicksearchbox/org.chromium.content.app.SandboxedProcessService0:0}
+    packageName=com.google.android.googlequicksearchbox
+    app=ProcessRecord{677e39a 2763:com.google.android.webview:sandboxed_process0:org.chromium.content.app.SandboxedProcessService0:0/u0a144i0}
+  * ServiceRecord{a90d603 u0 md.obsidian/org.chromium.content.app.SandboxedProcessService0:0 c:md.obsidian}
+    intent={cmp=md.obsidian/org.chromium.content.app.SandboxedProcessService0:0}
+    packageName=md.obsidian
+    processName=com.google.android.webview:sandboxed_process0:org.chromium.content.app.SandboxedProcessService0:0
+    app=ProcessRecord{de7abb9 3331:com.google.android.webview:sandboxed_process0:org.chromium.content.app.SandboxedProcessService0:0/u0a209i1}
+    isolationHostProc=ProcessRecord{de7abb9 3331:com.google.android.webview:sandboxed_process0:org.chromium.content.app.SandboxedProcessService0:0/u0a209i1}
+"""
+
+
+def renderer(services, bundle="md.obsidian", app_uid=10209):
+    return android_setup.sandboxed_renderer_pid(services, bundle, app_uid)
+
+
+def test_sandboxed_renderer_pid_finds_only_the_apps_isolated_renderer():
+    assert renderer(API_35_SANDBOXED_SERVICES) == 3331
+    assert renderer(API_35_SANDBOXED_SERVICES, "com.example.other") is None
+    in_app_process = API_35_SANDBOXED_SERVICES.replace("/u0a209i1}", "/u0a209}")
+    assert renderer(in_app_process) is None
+
+
+def test_sandboxed_renderer_pid_requires_the_bound_app_process():
+    # isolationHostProc alone does not prove a running renderer.
+    unbound = re.sub(r"(\n\s*)app=ProcessRecord\{[^}]*\}", r"\1app=null", API_35_SANDBOXED_SERVICES)
+    assert renderer(unbound) is None
+
+
+def test_sandboxed_renderer_pid_ignores_records_after_obsidians():
+    unbound = re.sub(r"(\n\s*)app=ProcessRecord\{[^}]*\}", r"\1app=null", API_35_SANDBOXED_SERVICES)
+    destroying = (
+        "  * Destroy ServiceRecord{9f1 u0 com.example.other/org.chromium.content.app.SandboxedProcessService0:1}\n"
+        "    app=ProcessRecord{9f2 777:com.google.android.webview:sandboxed_process0/u0a150i7}\n"
+    )
+    assert renderer(unbound + destroying) is None
+
+
+def test_sandboxed_renderer_pid_ignores_another_users_obsidian():
+    other_user = API_35_SANDBOXED_SERVICES.replace(" u0 md.obsidian/", " u10 md.obsidian/").replace(
+        "/u0a209i1}", "/u10a209i1}"
+    )
+    assert renderer(other_user) is None
+    assert renderer(other_user, app_uid=1_010_209) == 3331
 
 
 def test_ensure_redroid_pins_image_and_loopback_binding(monkeypatch, tmp_path):
