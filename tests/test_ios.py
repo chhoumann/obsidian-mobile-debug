@@ -3,8 +3,8 @@ import argparse
 from pathlib import Path
 
 import pytest
-
 from fake_phone import IOS_SCRATCH_DIR, SCRATCH, FakePhone, fake_ios, outcome
+
 from obsidian_mobile_debug import ios
 from obsidian_mobile_debug.cli import build_parser
 

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Connect to Obsidian's WKWebView on a USB-connected iPhone via the WebKit
 Web Inspector protocol (pymobiledevice3) and evaluate JavaScript in it.
 
@@ -26,8 +25,8 @@ EXPRESSIONS = [
     ("5 most-recent md files",
      "app.vault.getMarkdownFiles().sort((a,b)=>b.stat.mtime-a.stat.mtime).slice(0,5).map(f=>f.path)"),
     ("total words in active note",
-     "(async()=>{const f=app.workspace.getActiveFile(); if(!f) return null; "
-     "const t=await app.vault.cachedRead(f); return t.trim().split(/\\s+/).filter(Boolean).length;})()"),
+     ("(async()=>{const f=app.workspace.getActiveFile(); if(!f) return null; "
+      "const t=await app.vault.cachedRead(f); return t.trim().split(/\\s+/).filter(Boolean).length;})()")),
 ]
 
 

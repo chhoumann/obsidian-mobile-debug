@@ -129,7 +129,8 @@ async def _with_vault_session(
 async def _ios_switch_vault(
     lockdown: Any, bundle: str, open_path: str, trust_plugins: bool = False,
 ) -> dict[str, Any]:
-    from . import ios, provision as prov
+    from . import ios
+    from . import provision as prov
 
     async with ios.inspector_session_unlocked(lockdown, bundle) as (_target, session):
         return await ios.ev(session, prov.open_vault_js(open_path, trust_plugins=trust_plugins))
@@ -179,7 +180,8 @@ def _ios_runtime_phase(args: argparse.Namespace, probes: list[tuple[str, str]]):
 
 
 async def cmd_verify_ios(lockdown: Any, args: argparse.Namespace) -> int:
-    from . import ios, provision as prov
+    from . import ios
+    from . import provision as prov
     from .lock import inspector_lock
 
     probes = resolve_probes(args)
@@ -290,7 +292,8 @@ async def _ios_restore_and_cleanup(
     Obsidian has verifiably left it. Any incomplete step is reported in the
     summary instead of silently swallowed.
     """
-    from . import ios, provision as prov
+    from . import ios
+    from . import provision as prov
 
     if not switched:
         summary["restore"] = {"attempted": False, "reason": "never left the original vault"}
@@ -377,7 +380,8 @@ async def _android_wait_for_vault(port: int, expected_vault: str,
 
 
 async def cmd_verify_android(args: argparse.Namespace) -> int:
-    from . import android, provision as prov
+    from . import android
+    from . import provision as prov
 
     probes = resolve_probes(args)
     files = android.resolve_plugin_files_for_provision(args)
@@ -503,7 +507,8 @@ async def _android_restore_and_cleanup(
     args: argparse.Namespace, summary: dict[str, Any], failures: list[str],
     switched: bool, original_path: str | None, cleanup: bool,
 ) -> None:
-    from . import android, provision as prov
+    from . import android
+    from . import provision as prov
 
     if not switched:
         summary["restore"] = {"attempted": False, "reason": "never left the original vault"}

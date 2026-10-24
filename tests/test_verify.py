@@ -179,10 +179,17 @@ def test_ev_ignores_proxy_environment(monkeypatch):
 
 
 # ---------- restore/cleanup safety against a fake phone ----------
-from fake_phone import (  # noqa: E402
-    ANDROID_ROOT, ANDROID_SCRATCH_DIR, IOS_SCRATCH_DIR, SCRATCH,
-    FakePhone, fake_android, fake_ios, outcome,
+from fake_phone import (
+    ANDROID_ROOT,
+    ANDROID_SCRATCH_DIR,
+    IOS_SCRATCH_DIR,
+    SCRATCH,
+    FakePhone,
+    fake_android,
+    fake_ios,
+    outcome,
 )
+
 
 def test_ios_verify_cleanup_restores_then_deletes_scratch(monkeypatch, capsys):
     phone = FakePhone("documents/notes", {"/Documents/notes"})

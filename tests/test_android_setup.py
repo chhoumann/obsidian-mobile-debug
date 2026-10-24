@@ -124,8 +124,10 @@ def test_verify_android_sandbox_accepts_package_uid_forms(monkeypatch, tmp_path,
     responses = iter([
         f"Package [md.obsidian]\n  {uid_field}=10123",
         "Name:\tmd.obsidian\nUid:\t10123\t10123\t10123\t10123",
-        "Multiprocess enabled: true\n"
-        "Current WebView package (name, version): (com.android.webview, 125.0.1)",
+        (
+            "Multiprocess enabled: true\n"
+            "Current WebView package (name, version): (com.android.webview, 125.0.1)"
+        ),
     ])
     monkeypatch.setattr(android_setup, "_adb_text", lambda *_args, **_kwargs: next(responses))
     result = android_setup.verify_android_sandbox(config(tmp_path), Path("/adb"), 42)

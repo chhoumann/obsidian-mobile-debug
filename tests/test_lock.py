@@ -36,10 +36,12 @@ def test_acquire_writes_owner_info(lock_dir):
 
 def test_contention_fails_fast_with_owner_details(lock_dir):
     """flock is per open-file-description, so a second open in this process contends."""
-    with lock.inspector_lock("dev", "bundle"):
-        with pytest.raises(SystemExit) as excinfo:
-            with lock.inspector_lock("dev", "bundle"):
-                pass
+    with (
+        lock.inspector_lock("dev", "bundle"),
+        pytest.raises(SystemExit) as excinfo,
+        lock.inspector_lock("dev", "bundle"),
+    ):
+        pass
     message = str(excinfo.value)
     assert f"pid {os.getpid()}" in message
     assert "Command:" in message
@@ -47,9 +49,8 @@ def test_contention_fails_fast_with_owner_details(lock_dir):
 
 
 def test_different_bundle_does_not_contend(lock_dir):
-    with lock.inspector_lock("dev", "md.obsidian"):
-        with lock.inspector_lock("dev", "other.bundle"):
-            pass
+    with lock.inspector_lock("dev", "md.obsidian"), lock.inspector_lock("dev", "other.bundle"):
+        pass
 
 
 def test_lock_released_after_normal_exit(lock_dir):
@@ -60,9 +61,8 @@ def test_lock_released_after_normal_exit(lock_dir):
 
 
 def test_lock_released_after_exception(lock_dir):
-    with pytest.raises(RuntimeError):
-        with lock.inspector_lock("dev", "bundle"):
-            raise RuntimeError("boom")
+    with pytest.raises(RuntimeError), lock.inspector_lock("dev", "bundle"):
+        raise RuntimeError("boom")
     with lock.inspector_lock("dev", "bundle"):
         pass
 
@@ -81,10 +81,12 @@ def test_corrupt_lock_file_reports_unknown_owner(lock_dir):
     path = lock.lock_path("dev", "bundle")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("not json", encoding="utf-8")
-    with lock.inspector_lock("dev", "bundle"):
-        with pytest.raises(SystemExit) as excinfo:
-            with lock.inspector_lock("dev", "bundle"):
-                pass
+    with (
+        lock.inspector_lock("dev", "bundle"),
+        pytest.raises(SystemExit) as excinfo,
+        lock.inspector_lock("dev", "bundle"),
+    ):
+        pass
     # Owner info is overwritten by the live holder, so it is known here; the
     # corrupt-content path is exercised via _read_owner directly below.
     assert "Another OMD process" in str(excinfo.value)
@@ -122,7 +124,7 @@ def test_cross_process_contention(lock_dir):
     """)
     with lock.inspector_lock("dev", "bundle"):
         result = subprocess.run(
-            [sys.executable, "-c", child], text=True, capture_output=True,
+            [sys.executable, "-c", child], check=False, text=True, capture_output=True,
             env={**os.environ, "OMD_LOCK_DIR": str(lock_dir)},
         )
     assert result.returncode == 3

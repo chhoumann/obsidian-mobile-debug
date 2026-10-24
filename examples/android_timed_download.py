@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Timed PodNotes download on the Android emulator via CDP, for the perf matrix.
 
 Sets the current episode to the given URL, clears any prior download, fires the

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Validate the PodNotes streaming download against vault-watcher plugins.
 
 Drives ONE download of PodNotes' current episode on the Android emulator over CDP
@@ -25,6 +24,7 @@ podnotes_ios.py / android_cdp.py) so re-runs hit the same file.
 """
 import argparse
 import asyncio
+import contextlib
 import json
 import time
 import urllib.request
@@ -178,11 +178,9 @@ async def main():
 
     # Best-effort: detach the probe so a later run starts clean (skip if crashed).
     if not result.get("crashed"):
-        try:
+        with contextlib.suppress(Exception):
             await ev("(()=>{if(window.__wp&&window.__wp.refs){for(const r of window.__wp.refs)"
                      "app.vault.offref(r);window.__wp=null;}return 1})()")
-        except Exception:  # noqa: BLE001
-            pass
 
     print("RESULT " + json.dumps(result))
 

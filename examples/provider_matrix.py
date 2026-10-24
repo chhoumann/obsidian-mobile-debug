@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Build a multi-provider podcast-download test matrix.
 
 For a set of shows (resolved to feeds via the iTunes Search API), grab the
@@ -92,7 +91,7 @@ def main():
                 print(f"{show[:27]:28} <err: {m['error']}>")
                 continue
             print(f"{show[:27]:28} {m['startHost'][:21]:22} {m['finalHost'][:25]:26} "
-                  f"{m['redirects']:^5} {('yes' if m['range206'] else 'NO'):4} {str(m['sizeMB']):>6}")
+                  f"{m['redirects']:^5} {('yes' if m['range206'] else 'NO'):4} {m['sizeMB']!s:>6}")
             rows.append({"show": show, "url": enc, **m})
         except Exception as e:  # noqa: BLE001
             print(f"{show[:27]:28} <fail: {str(e)[:50]}>")

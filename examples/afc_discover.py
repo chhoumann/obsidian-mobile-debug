@@ -1,11 +1,14 @@
 import asyncio
+
+from pymobiledevice3.exceptions import AfcException
 from pymobiledevice3.lockdown import create_using_usbmux
 from pymobiledevice3.services.house_arrest import HouseArrestService
+
 
 async def safe_ls(afc, p):
     try:
         return await afc.listdir(p)
-    except Exception as e:
+    except AfcException as e:
         return f"<err: {e}>"
 
 async def main():

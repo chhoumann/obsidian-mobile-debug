@@ -28,6 +28,7 @@ import posixpath
 import re
 import subprocess
 import sys
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -94,8 +95,7 @@ def guard_real_vault(vault_name: str, args: argparse.Namespace, operation: str) 
 def run_adb(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
-            [adb_bin(), *args], check=check, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            [adb_bin(), *args], check=check, text=True, capture_output=True,
         )
     except FileNotFoundError as exc:
         raise SystemExit(
@@ -133,7 +133,7 @@ def discover_socket(package: str) -> tuple[str, int]:
         if name in sockets:
             return name, int(pid)
     if sockets:
-        name = sorted(sockets)[0]
+        name = min(sockets)
         pid_match = re.search(r"_(\d+)$", name)
         return name, int(pid_match.group(1)) if pid_match else int(pids[0])
 
@@ -158,7 +158,7 @@ def cdp_targets(port: int) -> list[dict[str, Any]]:
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
         return json.load(opener.open(f"http://localhost:{port}/json", timeout=10))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise SystemExit(
             f"Could not read the CDP target list on localhost:{port}: {exc}\n"
             "Is the WebView still alive? Re-run after confirming Obsidian is foregrounded."
@@ -229,9 +229,9 @@ def format_cdp_console_event(params: dict[str, Any], received_at: str) -> dict[s
 
 
 def _utc_now_iso() -> str:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+    return datetime.now(UTC).isoformat(timespec="milliseconds")
 
 
 async def capture_console_events(port: int, seconds: float) -> list[dict[str, Any]]:
@@ -563,25 +563,31 @@ def resolve_plugin_files_for_provision(args: argparse.Namespace) -> dict[str, st
 async def cmd_logs(args: argparse.Namespace) -> int:
     run_adb(["logcat", "-c"], check=False)
     print(f"-- streaming Android logcat (Obsidian/WebView/crash lines) for {args.seconds}s --")
-    process = subprocess.Popen(
-        [adb_bin(), "logcat", "-v", "time"], text=True,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    process = await asyncio.create_subprocess_exec(
+        adb_bin(), "logcat", "-v", "time",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
     )
     tokens = ("obsidian", "webview", "chromium", "fatal", "crash")
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + args.seconds
     try:
-        deadline = asyncio.get_running_loop().time() + args.seconds
-        while asyncio.get_running_loop().time() < deadline:
-            line = await asyncio.to_thread(process.stdout.readline)
-            if not line:
+        while (remaining := deadline - loop.time()) > 0:
+            try:
+                raw = await asyncio.wait_for(process.stdout.readline(), remaining)
+            except TimeoutError:
                 break
+            if not raw:
+                break
+            line = raw.decode(errors="replace")
             if any(token in line.lower() for token in tokens):
                 print(line, end="")
     finally:
-        process.terminate()
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
+        if process.returncode is None:
+            process.terminate()
+            try:
+                await asyncio.wait_for(process.wait(), 5)
+            except TimeoutError:
+                process.kill()
     return 0
 
 

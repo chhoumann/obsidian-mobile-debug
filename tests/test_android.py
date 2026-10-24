@@ -3,8 +3,15 @@ import argparse
 import json
 
 import pytest
+from fake_phone import (
+    ANDROID_ROOT,
+    ANDROID_SCRATCH_DIR,
+    SCRATCH,
+    FakePhone,
+    fake_android,
+    outcome,
+)
 
-from fake_phone import ANDROID_ROOT, ANDROID_SCRATCH_DIR, SCRATCH, FakePhone, fake_android, outcome
 from obsidian_mobile_debug import android
 from obsidian_mobile_debug.cli import build_parser
 
@@ -161,7 +168,6 @@ class _FakeAdb:
             self.pushes.append((args[1], args[2]))
         else:
             self.shell_calls.append(args)
-        return None
 
 
 def _run_provision(monkeypatch, args, fake):
