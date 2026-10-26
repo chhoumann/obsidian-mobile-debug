@@ -281,6 +281,15 @@ wheels = [
 ]
 
 [[package]]
+name = "bytestruct"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/1b/e4/37acaf4c2217e117c42163159204d749a318cb11dd58a5c39e37c482e720/bytestruct-0.2.0.tar.gz", hash = "sha256:ef0767fe48c0be9b2e4585565d8b28959fa04c93256ddeb7efbbd1b8f5998011", size = 436428, upload-time = "2026-10-18T06:00:49.19Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c7/56/a571db06803a5a888568dde6d672ca21cef2b2bed7271d6c6c6eb976f730/bytestruct-0.2.0-py3-none-any.whl", hash = "sha256:ecec23ffd5f51b2f188276be83a8cb2a17910b746a0957a3306781e042e3c1cd", size = 20975, upload-time = "2026-10-18T06:00:47.495Z" },
+]
+
+[[package]]
 name = "certifi"
 version = "2026.10.19"
 source = { registry = "https://pypi.org/simple" }
@@ -829,19 +838,19 @@ wheels = [
 
 [[package]]
 name = "ipsw-parser"
-version = "1.8.2"
+version = "1.8.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "bytestruct" },
     { name = "coloredlogs" },
-    { name = "construct" },
     { name = "pyimg4" },
     { name = "remotezip2" },
     { name = "requests" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/cb/96/ddba5aa1ddff0e749054600be0e8dd748870816d0716132d3d185e3c05a4/ipsw_parser-1.8.2.tar.gz", hash = "sha256:2e4ad1cf43a1e9e6b5120d6c6699634420c4cd1d9f0d0cda6e819e794cd8d99d", size = 58278, upload-time = "2026-10-12T06:37:43.747Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/65/34/773f5320dedff1d1486e0c3e8ee297141bffce9b90dba431a5ec3e4df13e/ipsw_parser-1.8.3.tar.gz", hash = "sha256:3b2ceba12f2bfffefa17961a40d4b500c444b38a05eac1da9fa2bfdfda21bebc", size = 58829, upload-time = "2026-10-17T11:32:08.866Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/77/b7/303b2c797d087cd5e54685645d4da58e39ae6508d07dce726dbfbdd347ed/ipsw_parser-1.8.2-py3-none-any.whl", hash = "sha256:c7407e2c025fd8ccda84201050404bb7a1ddb9d87c1fe6d659fda2b59fc352b0", size = 40619, upload-time = "2026-10-12T06:37:42.364Z" },
+    { url = "https://files.pythonhosted.org/packages/40/ca/43fbc3ba1ec1cdb1b86314fce41555220817ecd70aa4e22a8dc2fc7270bd/ipsw_parser-1.8.3-py3-none-any.whl", hash = "sha256:50230ff69e0186f27e9a66ce1ec42efbf77fd4f288e7ef57aabee7be1d551969", size = 40800, upload-time = "2026-10-17T11:32:07.565Z" },
 ]
 
 [[package]]
@@ -1028,15 +1037,15 @@ dev = [
 
 [[package]]
 name = "opack2"
-version = "0.0.1"
+version = "0.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "arrow" },
-    { name = "construct" },
+    { name = "bytestruct" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b3/ac/8e7d6698282a2130c99fab2fffa3cb1910688ffee16ec36e3d1f71375adf/opack2-0.0.1.tar.gz", hash = "sha256:0deb0b5d7094253f631db201f3493094a5821404f736ab0234ba805ee93d57b2", size = 42047, upload-time = "2024-12-15T22:17:14.385Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5d/8a/ac48f032c6e6fbb27733eae8dc51760cae02ad3c3be4252b124d38621fac/opack2-0.1.0.tar.gz", hash = "sha256:6164a950fba950a440696c77fe69f459288f76c26c7a3cff5f30e54aee9aa6ed", size = 42443, upload-time = "2026-10-17T11:38:24.783Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/03/2b/92c2667b9d1d955d0c79e7bc4e38a9dfc51ef462617d5e604ffa3e0ceba2/opack2-0.0.1-py3-none-any.whl", hash = "sha256:11fd1ccc3f0370cf913ca51e96173ba4042bd4d131547d34c81b27a3cac3773c", size = 29792, upload-time = "2024-12-15T22:17:12.085Z" },
+    { url = "https://files.pythonhosted.org/packages/11/6e/a833a51158da05c4ad3fc30958f588c318cc66013816e5d53c8a38802ca2/opack2-0.1.0-py3-none-any.whl", hash = "sha256:0b9c5744c6bfe7bc3a9504d3fd5bade1ab4a2d6bcacb68b278dbd32dbc5de03f", size = 29862, upload-time = "2026-10-17T11:38:23.617Z" },
 ]
 
 [[package]]
@@ -1532,17 +1541,16 @@ wheels = [
 
 [[package]]
 name = "pykdebugparser"
-version = "1.2.8"
+version = "1.6.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "bytestruct" },
     { name = "click" },
-    { name = "construct" },
-    { name = "pygments" },
     { name = "termcolor" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6b/32/9838c8e756717fecf47f1aedd1e21ec70dbe1e4bd6d96f9060d7274aae72/pykdebugparser-1.2.8.tar.gz", hash = "sha256:fa692b469874c2bfb830f55f854648e5f5641353e3b7be16573286ef0c05fabc", size = 81088, upload-time = "2026-07-04T16:08:10.682Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/59/80/b0fe3592716b60bf80d8b3d0868da1cefb128244c7e55fda87fb486b1c29/pykdebugparser-1.6.1.tar.gz", hash = "sha256:2e0c0746cc62b70a226fa5421cc3cfb45fb5c9c3a923a8ca1387a320927d054b", size = 99073, upload-time = "2026-10-18T23:03:12.327Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/88/2f/1ad4bb0cc86f319c35ecbcaf23383eb61c3d8dd16b74fb3e1a1ebf145794/pykdebugparser-1.2.8-py2.py3-none-any.whl", hash = "sha256:7ed4bdb427f3d84fb4ba6ca380de6113769cd93df8d1c88da79036a2c36b6a1e", size = 77654, upload-time = "2026-07-04T16:08:09.721Z" },
+    { url = "https://files.pythonhosted.org/packages/c2/97/d1818fdad8c782b8f8c2df3fb3eaea7d6cd9ff8b766e241f954bda9f5df1/pykdebugparser-1.6.1-py2.py3-none-any.whl", hash = "sha256:31133b62ba3eef94fa3bb29b8b303eeb5eee0311c138a46635e4017533c537d6", size = 91943, upload-time = "2026-10-18T23:03:10.799Z" },
 ]
 
 [[package]]
@@ -1592,7 +1600,7 @@ wheels = [
 
 [[package]]
 name = "pymobiledevice3"
-version = "11.34.0"
+version = "11.36.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "asgiwebdav" },
@@ -1601,6 +1609,7 @@ dependencies = [
     { name = "av", version = "19.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' and sys_platform != 'darwin'" },
     { name = "backports-zstd", marker = "python_full_version < '3.14'" },
     { name = "bpylist2" },
+    { name = "bytestruct" },
     { name = "chardet", marker = "python_full_version >= '3.15'" },
     { name = "coloredlogs" },
     { name = "cryptography" },
@@ -1642,9 +1651,9 @@ dependencies = [
     { name = "uvicorn" },
     { name = "wsproto" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fb/f9/f05dfe92560061a11345f0e0d2781d72ef24035c2822b656596282a6e82a/pymobiledevice3-11.34.0.tar.gz", hash = "sha256:bfd3078f697c704eee761ed6b278da01d3c12f7e1bb27dc4cf3098424bd7d54d", size = 1682073, upload-time = "2026-10-17T09:56:25.137Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b1/a8/a2a232f221f9ecdfe72d6469e8a8155b0d3c8e5b1f32f510ea8bba5be977/pymobiledevice3-11.36.0.tar.gz", hash = "sha256:506df8bcaabe7c743907936941838d967f9b46ca878bfd33652436b5583a0df8", size = 1677025, upload-time = "2026-10-18T22:43:59.223Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/99/97/547a98d04d1be657704c2322b1eb0b46663efb8b71658d82f6b24c451d6b/pymobiledevice3-11.34.0-py3-none-any.whl", hash = "sha256:c9eada049f4ee47f23802155624b833c775fafbdafc17ec606cc0380d0d075f7", size = 1393709, upload-time = "2026-10-17T09:56:22.578Z" },
+    { url = "https://files.pythonhosted.org/packages/34/f7/b1d3750ad33985d82018ea5809f6883d3c944550c30988f246c9f8c899f2/pymobiledevice3-11.36.0-py3-none-any.whl", hash = "sha256:bd430d6286a8e2030049b25ada7437faa88e1610d821dc630e21c765f93e3a4b", size = 1388404, upload-time = "2026-10-18T22:43:56.983Z" },
 ]
 
 [[package]]
